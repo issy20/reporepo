@@ -1,0 +1,20 @@
+# ビルド生成物
+/reporepo
+/dist/
+*.exe
+
+# テスト・カバレッジ
+*.out
+coverage.*
+
+# ローカルデータ / 設定（誤コミット防止）
+data.json
+*.local
+
+# エディタ / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code ローカル設定
+.claude/settings.local.json
