@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 func TestClaudeGenerate_SendsMessagesRequestAndMapsResponse(t *testing.T) {

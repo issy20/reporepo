@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 const defaultClaudeEndpoint = "https://api.anthropic.com/v1/messages"

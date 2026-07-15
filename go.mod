@@ -1,4 +1,4 @@
-module github.com/yourname/reporepo
+module github.com/issy20/reporepo
 
 go 1.25.0
 

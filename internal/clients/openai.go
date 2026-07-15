@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 const defaultOpenAIEndpoint = "https://api.openai.com/v1/chat/completions"

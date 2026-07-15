@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 // Store はJSONファイルへの永続化を担当する。

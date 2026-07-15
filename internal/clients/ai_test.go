@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

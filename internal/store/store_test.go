@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 func TestStore_SaveAndLoad(t *testing.T) {

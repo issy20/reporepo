@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yourname/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/core"
 )
 
 const maxREADMECharacters = 12_000
