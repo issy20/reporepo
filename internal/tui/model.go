@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -76,7 +75,7 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 		if cfg.DefaultLanguage == "ja" || cfg.DefaultLanguage == "en" {
 			language = cfg.DefaultLanguage
 		}
-		if strings.TrimSpace(cfg.DefaultProvider) != "" {
+		if cfg.DefaultProvider == "claude" || cfg.DefaultProvider == "openai" {
 			provider = cfg.DefaultProvider
 		}
 	}
@@ -111,7 +110,8 @@ func (m *Model) reloadEntries() {
 		m.errMessage = "履歴を読み込めませんでした"
 		return
 	}
-	m.entries = entries[:0]
+	m.errMessage = ""
+	m.entries = make([]*core.Entry, 0, len(entries))
 	for _, entry := range entries {
 		if entry != nil {
 			m.entries = append(m.entries, entry)
