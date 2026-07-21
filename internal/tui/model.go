@@ -67,6 +67,9 @@ type Model struct {
 	renderer  markdownRenderer
 	cancel    context.CancelFunc
 	requestID uint64
+
+	mutationRequestID uint64
+	mutationPending   bool
 }
 
 func NewModel(deps Dependencies, cfg *core.Config) Model {

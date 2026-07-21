@@ -200,29 +200,23 @@ func TestWindowSizeUpdatesComponents(t *testing.T) {
 	}
 }
 
-func TestFavoriteAndDeletePersistSelection(t *testing.T) {
+func TestFavoriteUsesCopyWithoutChangingOriginalBeforeResult(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo"}
 	store := &recordingStore{entries: []*core.Entry{entry}}
 	m := NewModel(Dependencies{Store: store}, nil)
 	next, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	if cmd == nil || !entry.IsFavorite {
-		t.Fatal("favorite was not toggled")
+	if cmd == nil {
+		t.Fatal("favorite command is nil")
 	}
-	msg := cmd()
-	next, _ = updated(t, next, msg)
-	if store.upsertCalls != 1 || !entry.IsFavorite {
-		t.Fatalf("upsert=%d favorite=%v", store.upsertCalls, entry.IsFavorite)
+	if entry.IsFavorite || next.entries[0].IsFavorite || next.visible[0].IsFavorite {
+		t.Fatal("original entry changed before mutation result")
 	}
-	// お気に入り切替コマンドの再読込後も履歴タブで削除できる。
-	next.input.SetValue("")
-	deleted, deleteCmd := updated(t, next, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if deleteCmd == nil {
-		t.Fatal("delete command is nil")
+	_ = cmd()
+	if entry.IsFavorite || next.entries[0].IsFavorite || next.visible[0].IsFavorite {
+		t.Fatal("original entry changed by mutation command")
 	}
-	deleteMsg := deleteCmd()
-	deleted, _ = updated(t, deleted, deleteMsg)
-	if store.saveCalls != 1 || len(deleted.entries) != 0 {
-		t.Fatalf("save=%d entries=%d", store.saveCalls, len(deleted.entries))
+	if store.upsertCalls != 1 || len(store.entries) != 1 || !store.entries[0].IsFavorite || store.entries[0] == entry {
+		t.Fatalf("upsert=%d stored=%#v", store.upsertCalls, store.entries)
 	}
 }
 
@@ -232,6 +226,308 @@ func TestEmptyListFavoriteAndDeleteAreNoops(t *testing.T) {
 		got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 		if cmd != nil || len(got.entries) != 0 {
 			t.Fatalf("key=%c cmd=%v", key, cmd)
+		}
+	}
+}
+
+func runeKey(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}
+
+func TestFavoriteMutationSuccessReloadsAndSynchronizesCurrent(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {}}}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.state, m.current = stateDetail, entry
+
+	pending, cmd := updated(t, m, runeKey('f'))
+	if !pending.mutationPending || pending.mutationRequestID != 1 || cmd == nil {
+		t.Fatalf("pending=%v id=%d cmd=%v", pending.mutationPending, pending.mutationRequestID, cmd)
+	}
+	msg := cmd()
+	got, _ := updated(t, pending, msg)
+	if got.mutationPending || got.current == nil || !got.current.IsFavorite || !got.entries[0].IsFavorite || got.current == entry {
+		t.Fatalf("pending=%v current=%#v entries=%#v", got.mutationPending, got.current, got.entries)
+	}
+}
+
+func TestFavoriteFailureKeepsStateAndSanitizesError(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}, upsertErr: errors.New("secret path /tmp/history.json")}
+	m := NewModel(Dependencies{Store: store}, nil)
+	loadsBefore := store.loadCalls
+	pending, cmd := updated(t, m, runeKey('f'))
+	got, _ := updated(t, pending, cmd())
+	if got.mutationPending || got.entries[0] != entry || got.visible[0] != entry || entry.IsFavorite {
+		t.Fatalf("state changed on failure: %#v", got.entries)
+	}
+	if store.loadCalls != loadsBefore || got.errMessage != "履歴を保存できませんでした" || strings.Contains(got.errMessage, "secret") {
+		t.Fatalf("loads=%d err=%q", store.loadCalls, got.errMessage)
+	}
+}
+
+func TestMutationPendingSuppressesFavoriteAndDeleteAndOldResult(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	pending, cmd := updated(t, m, runeKey('f'))
+	for _, key := range []rune{'f', 'd'} {
+		got, blockedCmd := updated(t, pending, runeKey(key))
+		if blockedCmd != nil || got.mutationRequestID != pending.mutationRequestID {
+			t.Fatalf("key=%c was not suppressed", key)
+		}
+	}
+	old, _ := updated(t, pending, entryMutationFinishedMsg{requestID: pending.mutationRequestID - 1, kind: mutationFavorite, err: errors.New("old")})
+	if !old.mutationPending || old.errMessage != "" || old.entries[0] != entry {
+		t.Fatal("old mutation result was applied")
+	}
+	got, _ := updated(t, pending, cmd())
+	if got.mutationPending {
+		t.Fatal("current mutation result did not clear pending")
+	}
+}
+
+func TestFavoriteSuccessInFavoritesTabRemovesEntryAndClampsSelection(t *testing.T) {
+	first := &core.Entry{FullName: "first/repo", IsFavorite: true}
+	second := &core.Entry{FullName: "second/repo", IsFavorite: true}
+	store := &recordingStore{entries: []*core.Entry{first, second}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.tab, m.selected = tabFavorites, 1
+	m.refreshVisible()
+	pending, cmd := updated(t, m, runeKey('f'))
+	got, _ := updated(t, pending, cmd())
+	if len(got.visible) != 1 || got.visible[0].FullName != "first/repo" || got.selected != 0 {
+		t.Fatalf("visible=%#v selected=%d", got.visible, got.selected)
+	}
+}
+
+func TestDeleteUsesCaseInsensitiveFullNameAndDoesNotMutateBeforeResult(t *testing.T) {
+	targetInEntries := &core.Entry{FullName: "Owner/Repo"}
+	keep := &core.Entry{FullName: "keep/repo"}
+	store := &recordingStore{entries: []*core.Entry{targetInEntries, keep}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.visible = []*core.Entry{{FullName: "owner/repo"}}
+	originalEntries := append([]*core.Entry(nil), m.entries...)
+	pending, cmd := updated(t, m, runeKey('d'))
+	if cmd == nil || len(pending.entries) != 2 || pending.entries[0] != originalEntries[0] || pending.entries[1] != originalEntries[1] {
+		t.Fatal("model entries changed before delete result")
+	}
+	msg := cmd()
+	if store.saveCalls != 1 || len(store.entries) != 1 || store.entries[0] != keep {
+		t.Fatalf("saved=%#v calls=%d", store.entries, store.saveCalls)
+	}
+	got, _ := updated(t, pending, msg)
+	if len(got.entries) != 1 || got.entries[0] != keep {
+		t.Fatalf("entries=%#v", got.entries)
+	}
+}
+
+func TestDeleteFailureKeepsEntriesSelectionAndError(t *testing.T) {
+	first := &core.Entry{FullName: "first/repo"}
+	second := &core.Entry{FullName: "second/repo"}
+	store := &recordingStore{entries: []*core.Entry{first, second}, saveErr: errors.New("raw database failure")}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.selected = 1
+	loadsBefore := store.loadCalls
+	pending, cmd := updated(t, m, runeKey('d'))
+	got, _ := updated(t, pending, cmd())
+	if len(got.entries) != 2 || len(got.visible) != 2 || got.selected != 1 || got.entries[0] != first || got.entries[1] != second {
+		t.Fatalf("entries=%#v visible=%#v selected=%d", got.entries, got.visible, got.selected)
+	}
+	if store.loadCalls != loadsBefore || got.errMessage != "履歴を保存できませんでした" {
+		t.Fatalf("loads=%d err=%q", store.loadCalls, got.errMessage)
+	}
+}
+
+func TestDeleteLastEntryResetsSelection(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", IsFavorite: true}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.tab = tabFavorites
+	m.refreshVisible()
+	pending, cmd := updated(t, m, runeKey('d'))
+	got, _ := updated(t, pending, cmd())
+	if len(got.entries) != 0 || len(got.visible) != 0 || got.selected != 0 {
+		t.Fatalf("entries=%d visible=%d selected=%d", len(got.entries), len(got.visible), got.selected)
+	}
+}
+
+func TestDeleteTailClampsSelectionToNewTail(t *testing.T) {
+	first := &core.Entry{FullName: "first/repo"}
+	second := &core.Entry{FullName: "second/repo"}
+	store := &recordingStore{entries: []*core.Entry{first, second}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.selected = 1
+	pending, cmd := updated(t, m, runeKey('d'))
+	got, _ := updated(t, pending, cmd())
+	if len(got.visible) != 1 || got.visible[0] != first || got.selected != 0 {
+		t.Fatalf("visible=%#v selected=%d", got.visible, got.selected)
+	}
+}
+
+func TestSuccessfulMutationReportsReloadFailure(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	pending, cmd := updated(t, m, runeKey('f'))
+	msg := cmd()
+	store.loadErr = errors.New("load failed")
+	got, _ := updated(t, pending, msg)
+	if got.mutationPending || got.errMessage != "履歴を読み込めませんでした" || got.entries[0] != entry {
+		t.Fatalf("pending=%v err=%q entries=%#v", got.mutationPending, got.errMessage, got.entries)
+	}
+}
+
+func TestInputNavigationClampsAndTabRoundTrips(t *testing.T) {
+	entries := []*core.Entry{{FullName: "a/a", IsFavorite: true}, {FullName: "b/b"}}
+	m := NewModel(Dependencies{Store: &fakeStore{entries: entries}}, nil)
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.selected != 0 {
+		t.Fatalf("selected after up at start=%d", m.selected)
+	}
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.selected != 1 {
+		t.Fatalf("selected after down at end=%d", m.selected)
+	}
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != tabFavorites || m.selected != 0 || len(m.visible) != 1 {
+		t.Fatalf("favorites tab=%v selected=%d visible=%d", m.tab, m.selected, len(m.visible))
+	}
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != tabHistory || m.selected != 0 || len(m.visible) != 2 {
+		t.Fatalf("history tab=%v selected=%d visible=%d", m.tab, m.selected, len(m.visible))
+	}
+}
+
+func TestEmptyHistoryNavigationDoesNotPanic(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	for _, key := range []tea.KeyType{tea.KeyUp, tea.KeyDown, tea.KeyTab} {
+		var cmd tea.Cmd
+		m, cmd = updated(t, m, tea.KeyMsg{Type: key})
+		if cmd != nil || m.selected != 0 || len(m.visible) != 0 {
+			t.Fatalf("key=%v selected=%d visible=%d cmd=%v", key, m.selected, len(m.visible), cmd)
+		}
+	}
+}
+
+func TestEnterTrimsInput(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.input.SetValue("  owner/repo  ")
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || got.state != stateLoading || got.loadingLabel != "解析しています: owner/repo" {
+		t.Fatalf("state=%v label=%q cmd=%v", got.state, got.loadingLabel, cmd)
+	}
+}
+
+func TestEmptyEnterWithOutOfRangeSelectionIsNoop(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{entries: []*core.Entry{{FullName: "owner/repo"}}}}, nil)
+	m.selected = 99
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || got.state != stateInput {
+		t.Fatalf("state=%v cmd=%v", got.state, cmd)
+	}
+}
+
+func TestEmptyInputShortcutsToggleAndQuit(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	for _, tt := range []struct {
+		key      rune
+		language string
+		provider string
+	}{
+		{key: 'l', language: "en", provider: "claude"},
+		{key: 'l', language: "ja", provider: "claude"},
+		{key: 'p', language: "ja", provider: "openai"},
+		{key: 'p', language: "ja", provider: "claude"},
+	} {
+		m, _ = updated(t, m, runeKey(tt.key))
+		if m.language != tt.language || m.provider != tt.provider {
+			t.Fatalf("key=%c language=%s provider=%s", tt.key, m.language, m.provider)
+		}
+	}
+	_, qcmd := updated(t, m, runeKey('q'))
+	if qcmd == nil {
+		t.Fatal("q did not return quit command")
+	}
+	m.input.SetValue("typing")
+	_, escCmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if escCmd == nil {
+		t.Fatal("escape did not return quit command")
+	}
+}
+
+func TestTypingReservedAndRegularRunesGoesToTextInput(t *testing.T) {
+	for _, r := range []rune{'l', 'p', 'f', 'd', 'q', 'x'} {
+		m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+		m.input.SetValue("owner/")
+		got, _ := updated(t, m, runeKey(r))
+		if got.input.Value() != "owner/"+string(r) || got.language != "ja" || got.provider != "claude" {
+			t.Fatalf("rune=%c input=%q language=%s provider=%s", r, got.input.Value(), got.language, got.provider)
+		}
+	}
+}
+
+func TestTabWhileTypingDoesNotSwitchListTab(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.input.SetValue("owner/")
+	got, _ := updated(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if got.tab != tabHistory || got.input.Value() != "owner/" {
+		t.Fatalf("tab=%v input=%q", got.tab, got.input.Value())
+	}
+}
+
+func TestNilDependenciesAndDetailCurrentMutationKeysAreNoops(t *testing.T) {
+	m := NewModel(Dependencies{}, nil)
+	m.entries = []*core.Entry{{FullName: "owner/repo"}}
+	m.refreshVisible()
+	for _, key := range []rune{'f', 'd'} {
+		got, cmd := updated(t, m, runeKey(key))
+		if cmd != nil || got.mutationPending {
+			t.Fatalf("input key=%c cmd=%v pending=%v", key, cmd, got.mutationPending)
+		}
+	}
+	m.state, m.current = stateDetail, nil
+	for _, key := range []rune{'f', 'r'} {
+		got, cmd := updated(t, m, runeKey(key))
+		if cmd != nil || got.state != stateDetail {
+			t.Fatalf("detail key=%c state=%v cmd=%v", key, got.state, cmd)
+		}
+	}
+}
+
+func TestDetailLanguageHandlesNilAnalyses(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.state, m.current = stateDetail, entry
+	got, cmd := updated(t, m, runeKey('l'))
+	if got.language != "en" || got.state != stateLoading || cmd == nil {
+		t.Fatalf("language=%s state=%v cmd=%v", got.language, got.state, cmd)
+	}
+}
+
+func TestDetailEscapeClearsCurrent(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if got.state != stateInput || got.current != nil || cmd != nil {
+		t.Fatalf("state=%v current=%#v cmd=%v", got.state, got.current, cmd)
+	}
+}
+
+func TestDetailNavigationIsPassedToViewport(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.state = stateDetail
+	m.viewport.Width, m.viewport.Height = 20, 2
+	m.viewport.SetContent("one\ntwo\nthree\nfour\nfive\nsix")
+	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyPgDown, tea.KeyUp, tea.KeyPgUp} {
+		before := m.viewport.YOffset
+		m, _ = updated(t, m, tea.KeyMsg{Type: key})
+		if (key == tea.KeyDown || key == tea.KeyPgDown) && m.viewport.YOffset <= before {
+			t.Fatalf("key=%v offset did not increase: %d -> %d", key, before, m.viewport.YOffset)
+		}
+		if (key == tea.KeyUp || key == tea.KeyPgUp) && m.viewport.YOffset >= before {
+			t.Fatalf("key=%v offset did not decrease: %d -> %d", key, before, m.viewport.YOffset)
 		}
 	}
 }

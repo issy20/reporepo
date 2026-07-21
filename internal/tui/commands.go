@@ -19,7 +19,20 @@ type analysisFailedMsg struct {
 	requestID uint64
 	err       error
 }
-type entriesChangedMsg struct{ err error }
+
+type entryMutationKind uint8
+
+const (
+	mutationFavorite entryMutationKind = iota
+	mutationDelete
+)
+
+type entryMutationFinishedMsg struct {
+	requestID uint64
+	kind      entryMutationKind
+	fullName  string
+	err       error
+}
 
 func (m Model) analyzeCmd(ctx context.Context, input string, force bool, requestID uint64) tea.Cmd {
 	return func() tea.Msg {

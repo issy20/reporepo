@@ -50,9 +50,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 		}
 		return m, nil
-	case entriesChangedMsg:
+	case entryMutationFinishedMsg:
+		if msg.requestID != m.mutationRequestID || !m.mutationPending {
+			return m, nil
+		}
+		m.mutationPending = false
 		if msg.err != nil {
 			m.errMessage = msg.err.Error()
+			return m, nil
 		}
 		m.reloadEntries()
 		if m.current != nil {
@@ -94,7 +99,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "enter" {
 		value := strings.TrimSpace(m.input.Value())
 		if value == "" {
-			if len(m.visible) == 0 {
+			if m.selected < 0 || m.selected >= len(m.visible) || m.visible[m.selected] == nil {
 				return m, nil
 			}
 			value = m.visible[m.selected].FullName
@@ -193,9 +198,12 @@ func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) toggleFavorite() (tea.Model, tea.Cmd) {
+	if m.mutationPending {
+		return m, nil
+	}
 	entry := m.current
 	if m.state == stateInput {
-		if len(m.visible) == 0 {
+		if m.selected < 0 || m.selected >= len(m.visible) {
 			return m, nil
 		}
 		entry = m.visible[m.selected]
@@ -203,30 +211,41 @@ func (m Model) toggleFavorite() (tea.Model, tea.Cmd) {
 	if entry == nil || m.store == nil {
 		return m, nil
 	}
-	entry.IsFavorite = !entry.IsFavorite
+	updated := cloneEntry(entry)
+	updated.IsFavorite = !updated.IsFavorite
+	m.mutationRequestID++
+	m.mutationPending = true
+	requestID := m.mutationRequestID
+	fullName := entry.FullName
 	store := m.store
 	return m, func() tea.Msg {
-		err := store.Upsert(entry)
-		if err != nil {
-			entry.IsFavorite = !entry.IsFavorite
-		}
-		return entriesChangedMsg{err: userStoreError(err)}
+		err := store.Upsert(updated)
+		return entryMutationFinishedMsg{requestID: requestID, kind: mutationFavorite, fullName: fullName, err: userStoreError(err)}
 	}
 }
 
 func (m Model) deleteSelected() (tea.Model, tea.Cmd) {
-	if len(m.visible) == 0 || m.store == nil {
+	if m.mutationPending || m.selected < 0 || m.selected >= len(m.visible) || m.store == nil {
 		return m, nil
 	}
 	target := m.visible[m.selected]
+	if target == nil {
+		return m, nil
+	}
 	entries := make([]*core.Entry, 0, len(m.entries)-1)
 	for _, entry := range m.entries {
-		if entry != target {
+		if entry != nil && !strings.EqualFold(entry.FullName, target.FullName) {
 			entries = append(entries, entry)
 		}
 	}
+	m.mutationRequestID++
+	m.mutationPending = true
+	requestID := m.mutationRequestID
+	fullName := target.FullName
 	store := m.store
-	return m, func() tea.Msg { return entriesChangedMsg{err: userStoreError(store.Save(entries))} }
+	return m, func() tea.Msg {
+		return entryMutationFinishedMsg{requestID: requestID, kind: mutationDelete, fullName: fullName, err: userStoreError(store.Save(entries))}
+	}
 }
 
 func userStoreError(err error) error {

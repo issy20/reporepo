@@ -27,7 +27,13 @@ func (s *recordingStore) Upsert(e *core.Entry) error {
 		*s.events = append(*s.events, "store")
 	}
 	if s.upsertErr == nil {
-		s.entries = []*core.Entry{e}
+		for i, entry := range s.entries {
+			if entry != nil && strings.EqualFold(entry.FullName, e.FullName) {
+				s.entries[i] = e
+				return nil
+			}
+		}
+		s.entries = append(s.entries, e)
 	}
 	return s.upsertErr
 }
