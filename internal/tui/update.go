@@ -25,6 +25,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cancel = nil
+		m.requestID++
+		if msg.entry == nil {
+			m.state = stateInput
+			m.errMessage = "解析結果を受け取れませんでした"
+			return m, nil
+		}
 		m.current = msg.entry
 		m.state = stateDetail
 		m.errMessage = ""
@@ -36,8 +42,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cancel = nil
+		m.requestID++
 		m.state = stateInput
-		m.errMessage = msg.err.Error()
+		if msg.err == nil {
+			m.errMessage = "解析に失敗しました"
+		} else {
+			m.errMessage = msg.err.Error()
+		}
 		return m, nil
 	case entriesChangedMsg:
 		if msg.err != nil {

@@ -36,6 +36,9 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 	if err != nil {
 		return nil, errors.New("リポジトリの入力形式が正しくありません")
 	}
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
 	if m.store == nil {
 		return nil, errors.New("保存先を利用できません")
 	}
@@ -49,11 +52,12 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 		if err := contextError(ctx); err != nil {
 			return nil, err
 		}
-		existing.ViewedAt = m.now()
-		if err := m.store.Upsert(existing); err != nil {
+		updated := cloneEntry(existing)
+		updated.ViewedAt = m.now()
+		if err := m.store.Upsert(updated); err != nil {
 			return nil, errors.New("履歴を保存できませんでした")
 		}
-		return existing, nil
+		return updated, nil
 	}
 	aiClient, ok := m.ai[m.provider]
 	if !ok || aiClient == nil {
@@ -64,13 +68,22 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 	}
 	data, err := m.github.FetchRepository(ctx, owner, repo)
 	if err != nil {
+		if contextError(ctx) != nil {
+			return nil, errors.New("解析をキャンセルしました")
+		}
 		return nil, errors.New("GitHub からリポジトリ情報を取得できませんでした")
 	}
 	if data == nil || data.Meta == nil {
 		return nil, errors.New("GitHub の応答にリポジトリ情報がありません")
 	}
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
 	analysis, err := aiClient.Generate(ctx, data.Meta, data.README, m.language)
 	if err != nil {
+		if contextError(ctx) != nil {
+			return nil, errors.New("解析をキャンセルしました")
+		}
 		return nil, errors.New("AI による解析に失敗しました")
 	}
 	if analysis == nil {
@@ -80,7 +93,7 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 		return nil, err
 	}
 	now := m.now()
-	entry := existing
+	entry := cloneEntry(existing)
 	if entry == nil {
 		entry = &core.Entry{FullName: data.Meta.FullName, CreatedAt: now, Analyses: make(map[string]*core.Analysis)}
 		if strings.TrimSpace(entry.FullName) == "" {
@@ -102,6 +115,20 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 	return entry, nil
 }
 
+func cloneEntry(entry *core.Entry) *core.Entry {
+	if entry == nil {
+		return nil
+	}
+	cloned := *entry
+	if entry.Analyses != nil {
+		cloned.Analyses = make(map[string]*core.Analysis, len(entry.Analyses))
+		for language, analysis := range entry.Analyses {
+			cloned.Analyses[language] = analysis
+		}
+	}
+	return &cloned
+}
+
 func findEntry(entries []*core.Entry, fullName string) *core.Entry {
 	for _, entry := range entries {
 		if entry != nil && strings.EqualFold(entry.FullName, fullName) {
@@ -112,6 +139,9 @@ func findEntry(entries []*core.Entry, fullName string) *core.Entry {
 }
 
 func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
 	select {
 	case <-ctx.Done():
 		return errors.New("解析をキャンセルしました")

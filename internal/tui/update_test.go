@@ -2,8 +2,10 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/issy20/reporepo/internal/core"
 )
@@ -54,6 +56,101 @@ func TestLoadingEscapeCancelsAndInvalidatesRequest(t *testing.T) {
 	cancelled, _ := updated(t, loading, tea.KeyMsg{Type: tea.KeyEsc})
 	if cancelled.state != stateInput || cancelled.cancel != nil || cancelled.requestID == id {
 		t.Fatalf("state=%v cancel=%v id=%d", cancelled.state, cancelled.cancel, cancelled.requestID)
+	}
+}
+
+func TestStartAnalysisClearsErrorSetsLabelAndUsesSelectedHistory(t *testing.T) {
+	entry := &core.Entry{FullName: "selected/repo"}
+	m := NewModel(Dependencies{Store: &fakeStore{entries: []*core.Entry{entry}}}, nil)
+	m.errMessage = "old error"
+	loading, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if loading.state != stateLoading || loading.cancel == nil || loading.errMessage != "" || loading.loadingLabel != "解析しています: selected/repo" || cmd == nil {
+		t.Fatalf("state=%v cancel=%v err=%q label=%q cmd=%v", loading.state, loading.cancel, loading.errMessage, loading.loadingLabel, cmd)
+	}
+}
+
+func TestEmptyInputAndHistoryDoesNotStartAnalysis(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.state != stateInput || got.requestID != 0 || got.cancel != nil || cmd != nil {
+		t.Fatalf("state=%v id=%d cancel=%v cmd=%v", got.state, got.requestID, got.cancel, cmd)
+	}
+}
+
+func TestLoadingKeysDoNotStartSecondAnalysis(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	next, _ := m.startAnalysis("owner/repo", false)
+	loading := next.(Model)
+	id := loading.requestID
+	got, cmd := updated(t, loading, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.requestID != id || got.cancel == nil || cmd != nil {
+		t.Fatalf("id=%d cancel=%v cmd=%v", got.requestID, got.cancel, cmd)
+	}
+}
+
+func TestSuccessReloadsHistoryUpdatesDetailAndIsAppliedOnce(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "summary"}}}
+	store := &fakeStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store, Renderer: fakeRenderer{output: "rendered detail"}}, nil)
+	m.state, m.requestID, m.errMessage = stateLoading, 7, "old"
+	m.viewport.Width, m.viewport.Height = 80, 20
+	m.cancel = func() {}
+	got, _ := updated(t, m, analysisSucceededMsg{requestID: 7, entry: entry})
+	if got.state != stateDetail || got.current != entry || got.cancel != nil || got.errMessage != "" || len(got.entries) != 1 || !strings.Contains(got.viewport.View(), "rendered detail") {
+		t.Fatalf("state=%v current=%#v cancel=%v err=%q entries=%d detail=%q", got.state, got.current, got.cancel, got.errMessage, len(got.entries), got.viewport.View())
+	}
+	duplicate := &core.Entry{FullName: "duplicate/repo"}
+	again, _ := updated(t, got, analysisSucceededMsg{requestID: 7, entry: duplicate})
+	if again.current != entry || again.state != stateDetail {
+		t.Fatal("same result was applied twice")
+	}
+}
+
+func TestNilAnalysisMessagesFailSafelyWithoutChangingData(t *testing.T) {
+	current := &core.Entry{FullName: "current/repo"}
+	entries := []*core.Entry{current}
+	for _, msg := range []tea.Msg{
+		analysisSucceededMsg{requestID: 3, entry: nil},
+		analysisFailedMsg{requestID: 3, err: nil},
+	} {
+		m := NewModel(Dependencies{Store: &fakeStore{entries: entries}}, nil)
+		m.state, m.requestID, m.current = stateLoading, 3, current
+		got, _ := updated(t, m, msg)
+		if got.state != stateInput || got.current != current || len(got.entries) != 1 || got.errMessage == "" || got.cancel != nil {
+			t.Fatalf("msg=%T state=%v current=%#v entries=%d err=%q", msg, got.state, got.current, len(got.entries), got.errMessage)
+		}
+	}
+}
+
+func TestOldFailureAndPostCancellationResultsAreIgnored(t *testing.T) {
+	current := &core.Entry{FullName: "current/repo"}
+	m := NewModel(Dependencies{Store: &fakeStore{entries: []*core.Entry{current}}}, nil)
+	m.state, m.requestID, m.current, m.errMessage = stateLoading, 10, current, "keep"
+	oldFailure, _ := updated(t, m, analysisFailedMsg{requestID: 9, err: errors.New("old")})
+	if oldFailure.state != stateLoading || oldFailure.errMessage != "keep" || oldFailure.current != current {
+		t.Fatal("old failure applied")
+	}
+	cancelled, _ := updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if cancelled.state != stateInput || cancelled.errMessage != "" {
+		t.Fatalf("state=%v err=%q", cancelled.state, cancelled.errMessage)
+	}
+	for _, msg := range []tea.Msg{
+		analysisSucceededMsg{requestID: 10, entry: &core.Entry{FullName: "late/repo"}},
+		analysisFailedMsg{requestID: 10, err: errors.New("late")},
+	} {
+		got, _ := updated(t, cancelled, msg)
+		if got.state != stateInput || got.current != current || len(got.entries) != 1 || got.errMessage != "" {
+			t.Fatalf("late %T applied", msg)
+		}
+	}
+}
+
+func TestLoadingSpinnerTickContinues(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.state = stateLoading
+	_, cmd := updated(t, m, spinnerTickMsg{msg: spinner.TickMsg{}})
+	if cmd == nil {
+		t.Fatal("spinner command is nil")
 	}
 }
 
