@@ -34,6 +34,11 @@ func resolveConfigPath() (string, error) {
 	return filepath.Join(configDir, "reporepo", "config.json"), nil
 }
 
+// ConfigFilePath は実行環境における設定ファイルの保存先を返す。
+func ConfigFilePath() (string, error) {
+	return resolveConfigPath()
+}
+
 // LoadConfig は設定ファイルを読み込み、環境変数で上書きした Config を返す。
 func LoadConfig() (*Config, error) {
 	path, err := resolveConfigPath()

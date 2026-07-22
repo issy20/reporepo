@@ -1,7 +1,19 @@
 // Command reporepo は GitHub リポジトリを AI で要約・解説する TUI アプリのエントリポイント。
 package main
 
+import (
+	"os"
+
+	"github.com/issy20/reporepo/cmd"
+)
+
 func main() {
-	// TODO(フェーズ8): cmd.Execute() を配線する。
-	// フェーズ0 では雛形のビルドが通ることのみを保証する。
+	os.Exit(run(cmd.Execute))
+}
+
+func run(execute func() error) int {
+	if err := execute(); err != nil {
+		return 1
+	}
+	return 0
 }
