@@ -200,6 +200,87 @@ func TestWindowSizeUpdatesComponents(t *testing.T) {
 	}
 }
 
+func TestWindowSizeZeroKeepsAllComponentSizesPositive(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	got, _ := updated(t, m, tea.WindowSizeMsg{})
+	if got.width < 1 || got.height < 1 || got.input.Width < 1 || got.viewport.Width < 1 || got.viewport.Height < 1 {
+		t.Fatalf("model=%dx%d input=%d viewport=%dx%d", got.width, got.height, got.input.Width, got.viewport.Width, got.viewport.Height)
+	}
+}
+
+func TestConsecutiveWindowSizesStayConsistentAndRerenderAtNewWidth(t *testing.T) {
+	renderer := &recordingRenderer{}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: renderer}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 30}, {Width: 12, Height: 4}, {Width: 0, Height: 0}} {
+		m, _ = updated(t, m, size)
+		layout := newLayout(size.Width, size.Height)
+		if m.width != layout.width || m.height != layout.height || m.input.Width != layout.inputWidth || m.viewport.Width != layout.viewportWidth || m.viewport.Height != layout.viewportHeight || renderer.width != max(1, layout.width-4) {
+			t.Fatalf("size=%#v model=%dx%d input=%d viewport=%dx%d renderWidth=%d", size, m.width, m.height, m.input.Width, m.viewport.Width, m.viewport.Height, renderer.width)
+		}
+	}
+}
+
+func TestDetailContentChangesResetViewportToTop(t *testing.T) {
+	renderer := &resizableRenderer{lines: 100}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: renderer}, nil)
+	m.state = stateDetail
+	m.current = &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {}, "en": {}}}
+	m.viewport.Width, m.viewport.Height = 78, 10
+	m.setDetailContent()
+	m.viewport.SetYOffset(40)
+	m, _ = updated(t, m, runeKey('l'))
+	if m.viewport.YOffset != 0 {
+		t.Fatalf("language change offset=%d", m.viewport.YOffset)
+	}
+	m.viewport.SetYOffset(40)
+	m.requestID = 7
+	m, _ = updated(t, m, analysisSucceededMsg{requestID: 7, entry: &core.Entry{FullName: "new/repo"}})
+	if m.viewport.YOffset != 0 {
+		t.Fatalf("entry change offset=%d", m.viewport.YOffset)
+	}
+}
+
+func TestDetailResizePreservesScrollPosition(t *testing.T) {
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: strings.Join(lines, "\n")}}, nil)
+	m.state = stateDetail
+	m.current = &core.Entry{FullName: "owner/repo"}
+	m.viewport.Width, m.viewport.Height = 78, 10
+	m.setDetailContent()
+	m.viewport.SetYOffset(45)
+
+	got, _ := updated(t, m, tea.WindowSizeMsg{Width: 60, Height: 13})
+	if got.viewport.YOffset == 0 {
+		t.Fatalf("scroll position reset on resize: offset=%d", got.viewport.YOffset)
+	}
+}
+
+func TestDetailResizeClampsOffsetWhenContentBecomesShort(t *testing.T) {
+	renderer := &resizableRenderer{lines: 100}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: renderer}, nil)
+	m.state = stateDetail
+	m.current = &core.Entry{FullName: "owner/repo"}
+	m.viewport.Width, m.viewport.Height = 78, 10
+	m.setDetailContent()
+	m.viewport.GotoBottom()
+	renderer.lines = 2
+
+	got, _ := updated(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	if got.viewport.YOffset != 0 {
+		t.Fatalf("offset=%d, want 0 for short content", got.viewport.YOffset)
+	}
+}
+
+type resizableRenderer struct{ lines int }
+
+func (r *resizableRenderer) Render(string, int) (string, error) {
+	return strings.Repeat("line\n", r.lines), nil
+}
+
 func TestFavoriteUsesCopyWithoutChangingOriginalBeforeResult(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo"}
 	store := &recordingStore{entries: []*core.Entry{entry}}

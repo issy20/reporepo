@@ -12,12 +12,13 @@ import (
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.input.Width = max(1, msg.Width-4)
-		m.viewport.Width = max(1, msg.Width-2)
-		m.viewport.Height = max(1, msg.Height-3)
+		layout := newLayout(msg.Width, msg.Height)
+		m.width, m.height = layout.width, layout.height
+		m.input.Width = layout.inputWidth
+		m.viewport.Width = layout.viewportWidth
+		m.viewport.Height = layout.viewportHeight
 		if m.state == stateDetail {
-			m.setDetailContent()
+			m.resizeDetailContent()
 		}
 		return m, nil
 	case analysisSucceededMsg:

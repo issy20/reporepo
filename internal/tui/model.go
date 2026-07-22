@@ -97,7 +97,9 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	if renderer == nil {
 		renderer = glamourRenderer{}
 	}
-	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
+	layout := newLayout(80, 24)
+	input.Width = layout.inputWidth
+	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
 	m.reloadEntries()
 	return m
 }
