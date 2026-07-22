@@ -25,7 +25,7 @@ type commandDependencies struct {
 // NewRootCommand は reporepo の CLI コマンドツリーを構築する。
 func NewRootCommand() *cobra.Command {
 	return newRootCommand(commandDependencies{
-		run: runApplication, loadConfig: core.LoadConfig, saveConfig: core.SaveConfig,
+		run: runApplication, loadConfig: core.LoadStoredConfig, saveConfig: core.SaveConfig,
 		configPath: core.ConfigFilePath, dataPath: dataFilePath,
 	})
 }

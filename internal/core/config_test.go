@@ -97,6 +97,35 @@ func TestLoadConfig_EnvPriority(t *testing.T) {
 	}
 }
 
+func TestLoadStoredConfig_DoesNotApplyEnvironment(t *testing.T) {
+	tempDir := t.TempDir()
+	origPath := configFilePath
+	configFilePath = filepath.Join(tempDir, "config.json")
+	defer func() { configFilePath = origPath }()
+
+	want := &Config{
+		GithubToken:     "file-token",
+		AnthropicAPIKey: "file-claude",
+		OpenAIAPIKey:    "file-openai",
+		DefaultProvider: "claude",
+		DefaultLanguage: "ja",
+	}
+	if err := SaveConfig(want); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	t.Setenv("GITHUB_TOKEN", "env-token")
+	t.Setenv("ANTHROPIC_API_KEY", "env-claude")
+	t.Setenv("OPENAI_API_KEY", "env-openai")
+
+	got, err := LoadStoredConfig()
+	if err != nil {
+		t.Fatalf("LoadStoredConfig() error = %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("LoadStoredConfig() = %#v, want %#v", got, want)
+	}
+}
+
 func TestLoadConfig_NoCache(t *testing.T) {
 	origPath := configFilePath
 	configFilePath = ""

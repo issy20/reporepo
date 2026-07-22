@@ -1,6 +1,14 @@
 # Plan: 対話式設定ウィザード
 
-Status: ready（`feature-cli-wiring` 統合待ち）
+Status: implemented
+
+実装結果（2026-07-22）:
+
+- `LoadStoredConfig` を追加し、保存値と環境変数による実行時上書きを分離した。
+- secret非表示・非echo、維持/更新/削除、選択値検証、AI key整合性、確認後の一度だけの保存を実装した。
+- EOF/割り込み/入出力エラー、Load/Save失敗では保存せず、安全なメッセージだけを返す。
+- `reporepo config` は保存済み設定を読み込む専用経路へ配線した。
+- 実装済みシナリオは `internal/core/config_test.go`、`cmd/wizard_test.go`、`cmd/config_test.go` で回帰テストする。
 
 ## 前提
 

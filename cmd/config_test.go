@@ -48,7 +48,7 @@ func TestConfigUpdatesValuesWithoutLeakingExistingSecrets(t *testing.T) {
 		loadConfig: func() (*core.Config, error) { return existing, nil },
 		saveConfig: func(cfg *core.Config) error { saved = cfg; return nil },
 	})
-	root.SetIn(strings.NewReader("\nnew-anthropic\n\ninvalid\nopenai\nxx\nen\n"))
+	root.SetIn(strings.NewReader("\nnew-anthropic\n\ninvalid\nopenai\nxx\nen\ny\n"))
 	root.SetOut(out)
 	root.SetArgs([]string{"config"})
 

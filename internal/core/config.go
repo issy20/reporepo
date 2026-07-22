@@ -39,8 +39,8 @@ func ConfigFilePath() (string, error) {
 	return resolveConfigPath()
 }
 
-// LoadConfig は設定ファイルを読み込み、環境変数で上書きした Config を返す。
-func LoadConfig() (*Config, error) {
+// LoadStoredConfig は設定ファイルだけを読み込み、環境変数を適用しない Config を返す。
+func LoadStoredConfig() (*Config, error) {
 	path, err := resolveConfigPath()
 	if err != nil {
 		return nil, err
@@ -54,7 +54,6 @@ func LoadConfig() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			overrideFromEnv(cfg)
 			return cfg, nil
 		}
 		return nil, err
@@ -64,6 +63,15 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	return cfg, nil
+}
+
+// LoadConfig は保存済み設定を読み込み、環境変数で上書きした Config を返す。
+func LoadConfig() (*Config, error) {
+	cfg, err := LoadStoredConfig()
+	if err != nil {
+		return nil, err
+	}
 	overrideFromEnv(cfg)
 	return cfg, nil
 }
