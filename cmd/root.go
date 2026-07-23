@@ -58,11 +58,11 @@ func newRootCommand(deps commandDependencies) *cobra.Command {
 		}
 		configPath, err := deps.configPath()
 		if err != nil {
-			return fmt.Errorf("設定ファイルの保存先を解決できません: %w", err)
+			return fmt.Errorf("設定ファイルの保存先を解決できませんでした")
 		}
 		dataPath, err := deps.dataPath()
 		if err != nil {
-			return fmt.Errorf("データファイルの保存先を解決できません: %w", err)
+			return fmt.Errorf("データファイルの保存先を解決できませんでした")
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "config: %s\ndata: %s\n", configPath, dataPath)
 		return err

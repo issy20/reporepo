@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,33 @@ func TestNewRootCommandPublishesCommands(t *testing.T) {
 		if !found {
 			t.Errorf("subcommand %q was not published", name)
 		}
+	}
+}
+
+func TestWhereDoesNotExposePathResolutionErrors(t *testing.T) {
+	secret := "private-home-path"
+	for _, tc := range []struct {
+		name string
+		deps commandDependencies
+		want string
+	}{
+		{"config", commandDependencies{configPath: func() (string, error) { return "", errors.New(secret) }, dataPath: func() (string, error) { return "data", nil }}, "設定ファイルの保存先を解決できませんでした"},
+		{"data", commandDependencies{configPath: func() (string, error) { return "config", nil }, dataPath: func() (string, error) { return "", errors.New(secret) }}, "データファイルの保存先を解決できませんでした"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newRootCommand(tc.deps)
+			out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+			root.SetOut(out)
+			root.SetErr(errOut)
+			root.SetArgs([]string{"where"})
+			err := root.Execute()
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v", err)
+			}
+			if strings.Contains(out.String()+errOut.String()+err.Error(), secret) {
+				t.Fatalf("path error leaked: %q %q %v", out, errOut, err)
+			}
+		})
 	}
 }
 

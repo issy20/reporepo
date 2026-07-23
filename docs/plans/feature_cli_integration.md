@@ -1,6 +1,15 @@
 # Plan: CLI・設定・TUI統合起動フロー
 
-Status: ready
+Status: in_progress
+
+## 実装進捗（2026-07-22）
+
+- application factory、AI key検証、provider補正、Configコピーを実装済み
+- 有限timeoutの共有HTTP clientと、key設定済みAI clientだけの生成を実装済み
+- Config / data path / TUI および `where` の下位エラー非露出を実装済み
+- 実バイナリで help / version / where / config / AI key不足終了を検証済み
+- `make smoke` を追加済み
+- 全テスト、race、vet、build、smokeの成功を確認済み
 
 ## 背景
 
