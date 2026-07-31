@@ -1,8 +1,8 @@
 # Reporepo 仕様書 兼 実装計画
 
-最終更新: 2026-06-25
+最終更新: 2026-07-31
 バージョン: 0.1.0 (開発中)
-ステータス: コア実装完了 / ビルド未検証 / 既知バグ未修正
+ステータス: コア・TUI・CLI実装完了 / OS Keychain移行仕様策定済み・実装未完了
 
 ---
 
@@ -52,13 +52,35 @@ Claude（Anthropic Messages API）と OpenAI（Chat Completions API）の両方�
 
 ### 2.7 設定
 
-`reporepo config` で対話的に API キー等を設定する。環境変数（`GITHUB_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）があれば実行時に優先する。
+`reporepo config` で GitHub token、Anthropic API key、OpenAI API key、既定AI provider、既定言語を対話的に設定する。
+
+GitHub tokenとAPI key（以下「secret」）は設定JSONへ保存せず、OSの資格情報ストアへ保存する。macOSではKeychain、WindowsではCredential Manager、Linux/*BSDではSecret Serviceを利用する。資格情報ストア上のservice名は `reporepo` とし、secretごとに次のaccount名を使用する。
+
+- `github-token`
+- `anthropic-api-key`
+- `openai-api-key`
+
+`config.json` には `default_provider` と `default_language` のみを保存する。実行時のsecret解決順序は次のとおりとする。
+
+1. 環境変数（`GITHUB_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）
+2. OSの資格情報ストア
+3. 未設定
+
+環境変数はその実行中だけ優先し、値を資格情報ストアや設定JSONへ書き戻さない。資格情報ストアが利用できない場合も、secretを設定JSONへ平文で自動フォールバックしない。必要なsecretが環境変数にも存在しなければ、安全なエラーと設定方法を表示する。
+
+設定ウィザードでは既存secretの値を表示せず、「設定済み / 未設定」の状態だけを表示する。空入力は既存値を維持し、`-` は資格情報ストアからの削除を意味する。secret入力はTTY上でechoしない。
 
 ---
 
 ## 3. 非機能要件
 
-API キーはローカル設定ファイルにパーミッション 0600 で保存する。サーバー・認証は持たない（各ユーザーが自分のキーを使うため不要）。単一バイナリで配布でき、CGO 不要でクロスコンパイル可能とする。GitHub トークン未設定でも動作するが、その場合は 60 リクエスト/時の制限がかかる。README は AI に渡す前に文字数で切り詰め、コストとレイテンシを抑制する。
+secretはOSの資格情報ストアへ保存し、設定JSON、データJSON、ログ、標準出力、標準エラー、エラーメッセージへ平文で残さない。`config.json` はsecretを含まないが、従来どおりディレクトリ0700・ファイル0600でアトミックに保存する。
+
+資格情報ストアが利用できない環境で平文保存へ暗黙に劣化してはならない。特にLinux/*BSDでは、Secret Serviceを提供するGNOME Keyring、KWallet互換サービス、KeePassXC等とD-Busセッションが必要になる場合がある。ヘッドレス環境などで利用できない場合は、環境変数による実行を案内する。
+
+サーバー・認証は持たない（各ユーザーが自分のキーを使うため不要）。単一バイナリで配布でき、CGO不要でクロスコンパイル可能とする。GitHub token未設定でも動作するが、その場合はGitHub APIの低いレート制限が適用される。READMEはAIへ渡す前に文字数で切り詰め、コストとレイテンシを抑制する。
+
+OS資格情報ストアは平文設定ファイルより安全な保存先だが、同一ユーザー権限で動作する悪意あるプロセスからの完全な隔離を保証するものではない。secretをログへ出さない、不要に長時間保持しない、外部エラーをサニタイズする防御も継続する。
 
 ---
 
@@ -66,7 +88,7 @@ API キーはローカル設定ファイルにパーミッション 0600 で保�
 
 ### 4.1 レイヤ構成
 
-最下層に設定管理（`internal/core/config.go`）と永続化（`internal/store`）を置く。その上に外部クライアント（`internal/clients`: GitHub、Claude、OpenAI）を置く。最上層に TUI（`internal/tui`）を置き、CLI エントリ（`cmd`）がそれらを束ねる。
+最下層に非secret設定管理（`internal/core/config.go`）、OS資格情報ストア境界（`internal/secretstore`）、解析履歴の永続化（`internal/store`）を置く。その上に外部クライアント（`internal/clients`: GitHub、Claude、OpenAI）を置く。最上層にTUI（`internal/tui`）を置き、CLIエントリ（`cmd`）が設定・secret・クライアントを束ねる。
 
 ### 4.2 ディレクトリ構成
 
@@ -83,7 +105,10 @@ reporepo/
   internal/
     core/
       types.go                 データ型（Entry / RepoMeta / Analysis）
-      config.go                設定の読み書き、パス解決
+      config.go                非secret設定の読み書き、パス解決、旧形式検出
+    secretstore/
+      store.go                 SecretStore境界、service/account定義
+      keyring.go               OS資格情報ストア実装
     store/
       store.go                 JSON 永続化ストア（同一 repo を1行にまとめる）
     clients/
@@ -108,6 +133,33 @@ reporepo/
 
 3つの状態を持つ。`stateInput`（owner/repo 入力とリスト表示）、`stateLoading`（取得・生成中、スピナー表示、esc でキャンセル）、`stateDetail`（解説のスクロール表示）。
 
+### 4.5 設定・secret読み込みフロー
+
+アプリケーション起動時は、非secret設定、OS資格情報ストア、環境変数を次の順序で組み立てる。
+
+```text
+config.json（provider / language）
+  + OS資格情報ストア（GitHub / Anthropic / OpenAI）
+  + 環境変数による上書き
+  → 実行時Config
+  → 利用可能なproviderだけをクライアント化
+  → TUI起動
+```
+
+OS資格情報ストアへのアクセスはinterface越しに行い、TUI、外部APIクライアント、設定JSON層がkeyringライブラリへ直接依存しない。CLIがcomposition rootとして実行時Configを組み立てる。
+
+資格情報ストアから「項目なし」が返された場合は未設定として扱う。アクセス拒否、ロック、D-Bus不在、backend異常は未設定と混同せず、安全な利用者向けエラーへ変換する。下位エラーにsecretが含まれる可能性を考慮し、生エラーをそのまま表示しない。
+
+### 4.6 secret更新の整合性
+
+設定ウィザードは編集内容をメモリ上で確定し、確認後にOS資格情報ストアと `config.json` を更新する。複数保存先を完全な単一トランザクションにはできないため、更新前のsecret状態を保持し、途中失敗時は可能な範囲でロールバックする。
+
+- secret更新に失敗した場合は `config.json` を更新しない。
+- `config.json` 更新に失敗した場合は、更新済みsecretを元の状態へ戻す。
+- ロールバックにも失敗した場合は、secret値を含まない復旧案内を表示する。
+- キャンセル、EOF、入力エラーでは資格情報ストアと設定JSONのどちらも変更しない。
+- 環境変数由来のsecretは更新・削除対象にしない。
+
 ---
 
 ## 5. データモデル
@@ -120,6 +172,33 @@ reporepo/
 
 保存先は `data.json`（`$XDG_DATA_HOME/reporepo/` または `~/.local/share/reporepo/`）に `Entry` の配列として書き出す。書き込みは一時ファイル経由の rename でアトミックに行う。
 
+### 5.1 設定データ
+
+`config.json` の新形式は非secret項目だけを持つ。
+
+```json
+{
+  "default_provider": "claude",
+  "default_language": "ja"
+}
+```
+
+GitHub token、Anthropic API key、OpenAI API keyはJSONへmarshalしない。実行時の `core.Config` がsecretフィールドを保持する場合も、それらには `json:"-"` を指定し、誤保存を型レベルで防止する。
+
+OS資格情報ストアの値をテストで実際に読み書きしてはならない。単体・統合テストではin-memory fakeを注入し、実OS Keychainを用いる確認は明示的な手動スモークテストへ限定する。
+
+### 5.2 旧形式からの移行
+
+旧 `config.json` に `github_token`、`anthropic_api_key`、`openai_api_key` が存在する場合は、一度だけOS資格情報ストアへ移行する。
+
+1. 旧JSONからsecretと非secret設定を読み取る。
+2. 空でないsecretを対応するservice/accountへ保存する。
+3. すべてのsecret保存が成功したことを確認する。
+4. secretを除いた新形式の `config.json` を一時ファイル経由で保存する。
+5. rename成功後に移行完了とする。
+
+途中で失敗した場合は旧 `config.json` を書き換えず、次回再試行できるようにする。資格情報ストアへ一部だけ保存済みでも、同じ値の再保存を許容する冪等な処理とする。移行失敗時に旧JSONのsecretを通常実行へ黙って使い続けず、安全な移行エラーと環境変数による一時回避策を案内する。
+
 ---
 
 ## 6. 外部 API 仕様
@@ -131,6 +210,20 @@ reporepo/
 ### 6.2 AI
 
 両プロバイダとも system プロンプトで出力言語と JSON 形式を指定し、user プロンプトにリポジトリのメタ情報と切り詰めた README を渡す。出力はコードフェンスや前後テキストを除去してから最初の `{` から最後の `}` を抽出してパースする（モデルが余計な文字を付けても吸収するため）。OpenAI は `response_format: json_object` も併用する。
+
+### 6.3 OS資格情報ストア
+
+クロスプラットフォームkeyring adapterを使用し、次のOS backendへ接続する。
+
+| OS | backend |
+|---|---|
+| macOS | Keychain |
+| Windows | Credential Manager |
+| Linux / *BSD | Secret Service over D-Bus |
+
+初期実装では `github.com/zalando/go-keyring` 相当の `Get` / `Set` / `Delete` を提供するライブラリをadapter内部で利用する。ライブラリ固有のエラーは `internal/secretstore` から外へ漏らさず、「未登録」と「backend障害」を区別したアプリケーション固有エラーへ変換する。
+
+本番コードは平文ファイルbackendを提供しない。テスト用in-memory backendはテストコードまたはテスト専用constructorに限定し、本番で選択できないようにする。
 
 ---
 
@@ -150,19 +243,17 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、設定の読み書き、JSON ストア（同一 repo を1行にまとめるロジック含む）、GitHub クライアント、Claude / OpenAI クライアント、AI 抽象とプロンプト構築、TUI のモデル・更新・描画・非同期コマンド・スタイル、cobra CLI、設定ウィザード、README・Makefile・GoReleaser 設定・LICENSE。総行数は約 1,750 行。
+データ型、設定の読み書き、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAIクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
 
 ### 9.2 未完了 / 要対応
 
 以下は引き継ぎ時に必ず対応すること。
 
-**ビルド未検証。** 開発環境に Go が無くネットワークも無効だったため、`go build` と `go mod tidy` を一度も実行できていない。最初のビルドはデバッグ前提で臨むこと。ライブラリ（Bubble Tea, Bubbles, Glamour, Lipgloss, Cobra）のバージョンは go.mod に固定値を書いたが、現行版との差異で API が変わっている可能性がある。
+**OS Keychain移行（最優先）。** 現在の実装はGitHub tokenとAPI keyを `config.json` に平文保存する。2.7、4.5、4.6、5.1、5.2、6.3の仕様に従い、OS資格情報ストアへの保存、環境変数優先、旧形式移行、平文フォールバック禁止を実装すること。
 
-**既知のバグ（最優先）。** 入力画面で `l` `p` `f` `d` `q` を常にショートカットとして横取りしているため、これらの文字を含む repo 名（例: `prettier/prettier`, `denoland/deno`）を入力欄にタイプできない。修正方針は、入力欄が空のときだけこれらをショートカットとして扱い、文字入力中は `m.input.Update(msg)` へ流すこと。対象は `internal/tui/update.go` の `updateInput`。
+**Linux / *BSDの動作確認。** Secret ServiceとD-Busが利用できるデスクトップ環境、利用できないヘッドレス環境の両方で、成功または安全で実行可能なエラー案内になることを確認する。
 
 **モデル名と API 仕様の検証。** 設定の既定モデル名（`claude-sonnet-4-6`, `gpt-4o-mini`）と各 API のリクエスト形状は、実キーを入れる前に各社の公式ドキュメントで現行仕様を確認すること。料金体系も変動する。
-
-**プレースホルダの module path。** `go.mod` と全 import の `github.com/yourname/reporepo` は仮の名前。実際の公開先に置換すること。LICENSE の著作者名も同様。
 
 ---
 
