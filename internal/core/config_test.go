@@ -1,20 +1,132 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestLoadConfig_Default(t *testing.T) {
+func TestConfigMarshalDoesNotContainSecrets(t *testing.T) {
+	cfg := Config{
+		GithubToken:     "github-sensitive-value",
+		AnthropicAPIKey: "anthropic-sensitive-value",
+		OpenAIAPIKey:    "openai-sensitive-value",
+		DefaultProvider: "claude",
+		DefaultLanguage: "ja",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	for _, forbidden := range []string{
+		"github_token", "anthropic_api_key", "openai_api_key",
+		cfg.GithubToken, cfg.AnthropicAPIKey, cfg.OpenAIAPIKey,
+	} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("marshaled Config contains secret material")
+		}
+	}
+}
+
+func TestLoadConfigFileSeparatesLegacySecrets(t *testing.T) {
 	tempDir := t.TempDir()
 	origPath := configFilePath
 	configFilePath = filepath.Join(tempDir, "config.json")
 	defer func() { configFilePath = origPath }()
 
-	cfg, err := LoadConfig()
+	legacyJSON := `{
+  "github_token": "legacy-github",
+  "anthropic_api_key": "legacy-anthropic",
+  "openai_api_key": "legacy-openai",
+  "default_provider": "openai",
+  "default_language": "en"
+}`
+	if err := os.WriteFile(configFilePath, []byte(legacyJSON), 0600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	cfg, legacy, err := LoadConfigFile()
 	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
+		t.Fatalf("LoadConfigFile() error = %v", err)
+	}
+	if cfg.GithubToken != "" || cfg.AnthropicAPIKey != "" || cfg.OpenAIAPIKey != "" {
+		t.Fatal("LoadConfigFile() copied legacy secrets into runtime Config")
+	}
+	if cfg.DefaultProvider != "openai" || cfg.DefaultLanguage != "en" {
+		t.Fatalf("LoadConfigFile() config = %#v", cfg)
+	}
+	wantLegacy := LegacySecrets{
+		GithubToken:     "legacy-github",
+		AnthropicAPIKey: "legacy-anthropic",
+		OpenAIAPIKey:    "legacy-openai",
+	}
+	if legacy != wantLegacy {
+		t.Fatal("LoadConfigFile() did not separate all legacy secrets")
+	}
+}
+
+func TestLoadConfigFileMissingReturnsDefaultsAndNoLegacySecrets(t *testing.T) {
+	tempDir := t.TempDir()
+	origPath := configFilePath
+	configFilePath = filepath.Join(tempDir, "missing.json")
+	defer func() { configFilePath = origPath }()
+
+	cfg, legacy, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile() error = %v", err)
+	}
+	if cfg.DefaultProvider != "claude" || cfg.DefaultLanguage != "ja" {
+		t.Fatalf("LoadConfigFile() config = %#v, want defaults", cfg)
+	}
+	if legacy != (LegacySecrets{}) {
+		t.Fatal("LoadConfigFile() returned legacy secrets for a missing file")
+	}
+}
+
+func TestLoadConfigFileRejectsBrokenJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	origPath := configFilePath
+	configFilePath = filepath.Join(tempDir, "config.json")
+	defer func() { configFilePath = origPath }()
+	if err := os.WriteFile(configFilePath, []byte(`{"default_provider":`), 0600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	if _, _, err := LoadConfigFile(); err == nil {
+		t.Fatal("LoadConfigFile() error = nil, want malformed JSON error")
+	}
+}
+
+func TestLoadConfigFileKeepsDefaultsForMissingFields(t *testing.T) {
+	tempDir := t.TempDir()
+	origPath := configFilePath
+	configFilePath = filepath.Join(tempDir, "config.json")
+	defer func() { configFilePath = origPath }()
+	if err := os.WriteFile(configFilePath, []byte(`{}`), 0600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	cfg, _, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile() error = %v", err)
+	}
+	if cfg.DefaultProvider != "claude" || cfg.DefaultLanguage != "ja" {
+		t.Fatalf("LoadConfigFile() config = %#v, want defaults", cfg)
+	}
+}
+
+func TestLoadStoredConfig_Default(t *testing.T) {
+	tempDir := t.TempDir()
+	origPath := configFilePath
+	configFilePath = filepath.Join(tempDir, "config.json")
+	defer func() { configFilePath = origPath }()
+
+	cfg, err := LoadStoredConfig()
+	if err != nil {
+		t.Fatalf("LoadStoredConfig failed: %v", err)
 	}
 
 	if cfg.DefaultProvider != "claude" {
@@ -53,47 +165,21 @@ func TestSaveConfig_Permissions(t *testing.T) {
 		t.Errorf("expected file mode 0600, got %o", mode)
 	}
 
-	loaded, err := LoadConfig()
+	loaded, err := LoadStoredConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig after save failed: %v", err)
+		t.Fatalf("LoadStoredConfig after save failed: %v", err)
 	}
-	if loaded.GithubToken != "test-token" || loaded.DefaultProvider != "openai" {
+	if loaded.GithubToken != "" || loaded.AnthropicAPIKey != "" || loaded.OpenAIAPIKey != "" || loaded.DefaultProvider != "openai" {
 		t.Errorf("loaded config does not match saved config")
 	}
-}
-
-func TestLoadConfig_EnvPriority(t *testing.T) {
-	tempDir := t.TempDir()
-	origPath := configFilePath
-	configFilePath = filepath.Join(tempDir, "config.json")
-	defer func() { configFilePath = origPath }()
-
-	cfg := &Config{
-		GithubToken:     "file-token",
-		AnthropicAPIKey: "file-claude",
-		OpenAIAPIKey:    "file-openai",
-	}
-	if err := SaveConfig(cfg); err != nil {
-		t.Fatalf("SaveConfig failed: %v", err)
-	}
-
-	t.Setenv("GITHUB_TOKEN", "env-token")
-	t.Setenv("ANTHROPIC_API_KEY", "env-claude")
-	t.Setenv("OPENAI_API_KEY", "env-openai")
-
-	loaded, err := LoadConfig()
+	data, err := os.ReadFile(configFilePath)
 	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
+		t.Fatalf("os.ReadFile() error = %v", err)
 	}
-
-	if loaded.GithubToken != "env-token" {
-		t.Errorf("expected GITHUB_TOKEN to be 'env-token' (env), got '%s'", loaded.GithubToken)
-	}
-	if loaded.AnthropicAPIKey != "env-claude" {
-		t.Errorf("expected ANTHROPIC_API_KEY to be 'env-claude' (env), got '%s'", loaded.AnthropicAPIKey)
-	}
-	if loaded.OpenAIAPIKey != "env-openai" {
-		t.Errorf("expected OPENAI_API_KEY to be 'env-openai' (env), got '%s'", loaded.OpenAIAPIKey)
+	for _, forbidden := range []string{"github_token", "anthropic_api_key", "openai_api_key", "test-token", "claude-key", "openai-key"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatal("saved config contains secret material")
+		}
 	}
 }
 
@@ -104,9 +190,6 @@ func TestLoadStoredConfig_DoesNotApplyEnvironment(t *testing.T) {
 	defer func() { configFilePath = origPath }()
 
 	want := &Config{
-		GithubToken:     "file-token",
-		AnthropicAPIKey: "file-claude",
-		OpenAIAPIKey:    "file-openai",
 		DefaultProvider: "claude",
 		DefaultLanguage: "ja",
 	}

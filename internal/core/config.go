@@ -10,11 +10,26 @@ import (
 
 // Config はアプリの設定情報を保持する。
 type Config struct {
-	GithubToken     string `json:"github_token"`
-	AnthropicAPIKey string `json:"anthropic_api_key"`
-	OpenAIAPIKey    string `json:"openai_api_key"`
+	GithubToken     string `json:"-"`
+	AnthropicAPIKey string `json:"-"`
+	OpenAIAPIKey    string `json:"-"`
 	DefaultProvider string `json:"default_provider"`
 	DefaultLanguage string `json:"default_language"`
+}
+
+type configFile struct {
+	GithubToken     string `json:"github_token,omitempty"`
+	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
+	OpenAIAPIKey    string `json:"openai_api_key,omitempty"`
+	DefaultProvider string `json:"default_provider"`
+	DefaultLanguage string `json:"default_language"`
+}
+
+// LegacySecrets は旧形式config.jsonから分離した移行対象のsecretを保持する。
+type LegacySecrets struct {
+	GithubToken     string
+	AnthropicAPIKey string
+	OpenAIAPIKey    string
 }
 
 // configFilePath は設定ファイルのパス。テストで上書き可能。
@@ -39,11 +54,11 @@ func ConfigFilePath() (string, error) {
 	return resolveConfigPath()
 }
 
-// LoadStoredConfig は設定ファイルだけを読み込み、環境変数を適用しない Config を返す。
-func LoadStoredConfig() (*Config, error) {
+// LoadConfigFile は非secret設定と旧形式の移行対象secretを分離して読み込む。
+func LoadConfigFile() (*Config, LegacySecrets, error) {
 	path, err := resolveConfigPath()
 	if err != nil {
-		return nil, err
+		return nil, LegacySecrets{}, err
 	}
 
 	cfg := &Config{
@@ -54,39 +69,33 @@ func LoadStoredConfig() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return cfg, nil
+			return cfg, LegacySecrets{}, nil
 		}
-		return nil, err
+		return nil, LegacySecrets{}, err
 	}
 
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, err
+	stored := configFile{
+		DefaultProvider: cfg.DefaultProvider,
+		DefaultLanguage: cfg.DefaultLanguage,
+	}
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return nil, LegacySecrets{}, err
 	}
 
-	return cfg, nil
+	cfg.DefaultProvider = stored.DefaultProvider
+	cfg.DefaultLanguage = stored.DefaultLanguage
+	legacy := LegacySecrets{
+		GithubToken:     stored.GithubToken,
+		AnthropicAPIKey: stored.AnthropicAPIKey,
+		OpenAIAPIKey:    stored.OpenAIAPIKey,
+	}
+	return cfg, legacy, nil
 }
 
-// LoadConfig は保存済み設定を読み込み、環境変数で上書きした Config を返す。
-func LoadConfig() (*Config, error) {
-	cfg, err := LoadStoredConfig()
-	if err != nil {
-		return nil, err
-	}
-	overrideFromEnv(cfg)
-	return cfg, nil
-}
-
-// overrideFromEnv は環境変数が設定されていれば Config を上書きする。
-func overrideFromEnv(cfg *Config) {
-	if env := os.Getenv("GITHUB_TOKEN"); env != "" {
-		cfg.GithubToken = env
-	}
-	if env := os.Getenv("ANTHROPIC_API_KEY"); env != "" {
-		cfg.AnthropicAPIKey = env
-	}
-	if env := os.Getenv("OPENAI_API_KEY"); env != "" {
-		cfg.OpenAIAPIKey = env
-	}
+// LoadStoredConfig は設定ファイルだけを読み込み、legacy secretを破棄して返す。
+func LoadStoredConfig() (*Config, error) {
+	cfg, _, err := LoadConfigFile()
+	return cfg, err
 }
 
 // SaveConfig は設定をファイルに 0600 パーミッションで保存する。
@@ -101,7 +110,11 @@ func SaveConfig(cfg *Config) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	stored := configFile{
+		DefaultProvider: cfg.DefaultProvider,
+		DefaultLanguage: cfg.DefaultLanguage,
+	}
+	data, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return err
 	}

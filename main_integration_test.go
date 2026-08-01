@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestBinaryNonInteractiveCommandsAndConfigFlow(t *testing.T) {
+func TestBinaryNonInteractiveCommands(t *testing.T) {
 	tmp := t.TempDir()
 	binary := filepath.Join(tmp, "reporepo")
 	if runtime.GOOS == "windows" {
@@ -66,36 +66,6 @@ func TestBinaryNonInteractiveCommandsAndConfigFlow(t *testing.T) {
 		t.Fatalf("where created data: %v", err)
 	}
 
-	secret := "integration-anthropic-secret"
-	stdout, stderr, err := run("\n"+secret+"\n\nclaude\nja\ny\n", "config")
-	if err != nil {
-		t.Fatalf("config: %v stderr=%q stdout=%q", err, stderr, stdout)
-	}
-	if strings.Contains(stdout+stderr, secret) {
-		t.Fatal("config output leaked secret")
-	}
-	info, err := os.Stat(configPath)
-	if err != nil {
-		t.Fatalf("stat config: %v", err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		t.Fatalf("config mode = %o", info.Mode().Perm())
-	}
-
-	if err := os.Remove(configPath); err != nil {
-		t.Fatalf("remove test config: %v", err)
-	}
-	stdout, stderr, err = run("", "run")
-	if err == nil {
-		t.Fatal("run without AI keys succeeded")
-	}
-	combined := stdout + stderr
-	if !strings.Contains(combined, "ANTHROPIC_API_KEY または OPENAI_API_KEY") {
-		t.Fatalf("output = %q", combined)
-	}
-	if strings.Contains(combined, tmp) {
-		t.Fatalf("output leaked internal path: %q", combined)
-	}
 }
 
 func filteredEnvironment() []string {

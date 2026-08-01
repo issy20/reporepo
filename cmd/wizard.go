@@ -10,10 +10,29 @@ import (
 	"syscall"
 
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/secretstore"
 	"golang.org/x/term"
 )
 
 var errWizardCanceled = errors.New("wizard canceled")
+
+type secretAction uint8
+
+const (
+	keepSecret secretAction = iota
+	setSecret
+	deleteSecret
+)
+
+type secretEdit struct {
+	action secretAction
+	value  string
+}
+
+type secretSnapshot struct {
+	value  string
+	exists bool
+}
 
 type wizardIO interface {
 	ReadLine(prompt string) (string, error)
@@ -66,41 +85,55 @@ type wizardDependencies struct {
 	io        wizardIO
 	load      func() (*core.Config, error)
 	save      func(*core.Config) error
+	secrets   secretstore.Store
 	lookupEnv func(string) (string, bool)
 }
 
-func runConfigWizard(in io.Reader, out io.Writer, load func() (*core.Config, error), save func(*core.Config) error) error {
+func runConfigWizard(in io.Reader, out io.Writer, load func() (*core.Config, error), save func(*core.Config) error, secrets secretstore.Store) error {
 	return runConfigWizardWith(wizardDependencies{
-		io: newConsoleWizardIO(in, out), load: load, save: save, lookupEnv: os.LookupEnv,
+		io: newConsoleWizardIO(in, out), load: load, save: save, secrets: secrets, lookupEnv: os.LookupEnv,
 	})
 }
 
 func runConfigWizardWith(deps wizardDependencies) error {
-	if deps.io == nil || deps.load == nil || deps.save == nil {
+	if deps.io == nil || deps.load == nil || deps.save == nil || deps.secrets == nil {
 		return errors.New("設定処理を利用できません")
 	}
 	if deps.lookupEnv == nil {
 		deps.lookupEnv = func(string) (string, bool) { return "", false }
 	}
 	cfg, err := deps.load()
+	if isMigrationFailure(err) {
+		return err
+	}
 	if err != nil || cfg == nil {
 		return errors.New("保存済み設定を読み込めませんでした")
 	}
 	updated := *cfg
-
-	if updated.GithubToken, err = promptSecret(deps.io, "GitHub token", updated.GithubToken); err != nil {
-		return inputResult(err)
-	}
-	if updated.AnthropicAPIKey, err = promptSecret(deps.io, "Anthropic API key", updated.AnthropicAPIKey); err != nil {
-		return inputResult(err)
-	}
-	if updated.OpenAIAPIKey, err = promptSecret(deps.io, "OpenAI API key", updated.OpenAIAPIKey); err != nil {
-		return inputResult(err)
+	updated.GithubToken = ""
+	updated.AnthropicAPIKey = ""
+	updated.OpenAIAPIKey = ""
+	stored, err := loadWizardSecrets(deps.secrets)
+	if err != nil {
+		return errors.New("OS資格情報ストアから設定を読み込めませんでした")
 	}
 
-	githubEnv := envPresent(deps.lookupEnv, "GITHUB_TOKEN")
-	claudeEnv := envPresent(deps.lookupEnv, "ANTHROPIC_API_KEY")
-	openAIEnv := envPresent(deps.lookupEnv, "OPENAI_API_KEY")
+	githubEdit, err := promptSecretEdit(deps.io, "GitHub token", stored[secretstore.GitHubToken].exists)
+	if err != nil {
+		return inputResult(err)
+	}
+	claudeEdit, err := promptSecretEdit(deps.io, "Anthropic API key", stored[secretstore.AnthropicAPIKey].exists)
+	if err != nil {
+		return inputResult(err)
+	}
+	openAIEdit, err := promptSecretEdit(deps.io, "OpenAI API key", stored[secretstore.OpenAIAPIKey].exists)
+	if err != nil {
+		return inputResult(err)
+	}
+
+	githubEnv := envPresent(deps.lookupEnv, githubTokenEnv)
+	claudeEnv := envPresent(deps.lookupEnv, anthropicAPIKeyEnv)
+	openAIEnv := envPresent(deps.lookupEnv, openAIAPIKeyEnv)
 	if githubEnv {
 		if err := deps.io.Println("GITHUB_TOKEN が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
@@ -126,19 +159,21 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		if err != nil {
 			return inputResult(err)
 		}
-		available := (updated.DefaultProvider == "claude" && (updated.AnthropicAPIKey != "" || claudeEnv)) ||
-			(updated.DefaultProvider == "openai" && (updated.OpenAIAPIKey != "" || openAIEnv))
+		claudeConfigured := configuredAfterEdit(stored[secretstore.AnthropicAPIKey].exists, claudeEdit)
+		openAIConfigured := configuredAfterEdit(stored[secretstore.OpenAIAPIKey].exists, openAIEdit)
+		available := (updated.DefaultProvider == "claude" && (claudeConfigured || claudeEnv)) ||
+			(updated.DefaultProvider == "openai" && (openAIConfigured || openAIEnv))
 		if available {
 			break
 		}
 		if err := deps.io.Println("選択したproviderのAPI keyがありません。secretを設定するか、利用可能なproviderを選択してください。"); err != nil {
 			return inputResult(err)
 		}
-		if updated.AnthropicAPIKey == "" && !claudeEnv && updated.OpenAIAPIKey == "" && !openAIEnv {
-			if updated.AnthropicAPIKey, err = promptSecret(deps.io, "Anthropic API key", updated.AnthropicAPIKey); err != nil {
+		if !claudeConfigured && !claudeEnv && !openAIConfigured && !openAIEnv {
+			if claudeEdit, err = promptSecretEdit(deps.io, "Anthropic API key", stored[secretstore.AnthropicAPIKey].exists); err != nil {
 				return inputResult(err)
 			}
-			if updated.OpenAIAPIKey, err = promptSecret(deps.io, "OpenAI API key", updated.OpenAIAPIKey); err != nil {
+			if openAIEdit, err = promptSecretEdit(deps.io, "OpenAI API key", stored[secretstore.OpenAIAPIKey].exists); err != nil {
 				return inputResult(err)
 			}
 		}
@@ -153,7 +188,12 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		return inputResult(err)
 	}
 
-	if err := printSummary(deps.io, &updated, githubEnv, claudeEnv, openAIEnv); err != nil {
+	configured := map[secretstore.Key]bool{
+		secretstore.GitHubToken:     configuredAfterEdit(stored[secretstore.GitHubToken].exists, githubEdit),
+		secretstore.AnthropicAPIKey: configuredAfterEdit(stored[secretstore.AnthropicAPIKey].exists, claudeEdit),
+		secretstore.OpenAIAPIKey:    configuredAfterEdit(stored[secretstore.OpenAIAPIKey].exists, openAIEdit),
+	}
+	if err := printSummary(deps.io, &updated, configured, githubEnv, claudeEnv, openAIEnv); err != nil {
 		return inputResult(err)
 	}
 	for {
@@ -163,8 +203,11 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		}
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "y", "yes":
-			if err := deps.save(&updated); err != nil {
-				return errors.New("設定を保存できませんでした")
+			edits := map[secretstore.Key]secretEdit{
+				secretstore.GitHubToken: githubEdit, secretstore.AnthropicAPIKey: claudeEdit, secretstore.OpenAIAPIKey: openAIEdit,
+			}
+			if err := saveWizardChanges(deps.secrets, stored, edits, func() error { return deps.save(&updated) }); err != nil {
+				return err
 			}
 			if err := deps.io.Println("設定を保存しました。"); err != nil {
 				return inputResult(err)
@@ -183,23 +226,101 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	}
 }
 
-func promptSecret(wio wizardIO, label, current string) (string, error) {
+func promptSecretEdit(wio wizardIO, label string, configured bool) (secretEdit, error) {
 	status := "未設定"
-	if current != "" {
-		status = "設定済み"
+	if configured {
+		status = "Keychain設定済み"
 	}
 	value, err := wio.ReadSecret(fmt.Sprintf("%s (%s、空欄で維持、-で削除): ", label, status))
 	if err != nil {
-		return "", err
+		return secretEdit{}, err
 	}
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return current, nil
+	switch value {
+	case "":
+		return secretEdit{action: keepSecret}, nil
+	case "-":
+		return secretEdit{action: deleteSecret}, nil
+	default:
+		return secretEdit{action: setSecret, value: value}, nil
 	}
-	if value == "-" {
-		return "", nil
+}
+
+func loadWizardSecrets(store secretstore.Store) (map[secretstore.Key]secretSnapshot, error) {
+	snapshots := make(map[secretstore.Key]secretSnapshot, 3)
+	for _, key := range []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey} {
+		value, err := store.Get(key)
+		switch {
+		case err == nil:
+			snapshots[key] = secretSnapshot{value: value, exists: true}
+		case errors.Is(err, secretstore.ErrNotFound):
+			snapshots[key] = secretSnapshot{}
+		default:
+			return nil, err
+		}
 	}
-	return value, nil
+	return snapshots, nil
+}
+
+func configuredAfterEdit(current bool, edit secretEdit) bool {
+	switch edit.action {
+	case setSecret:
+		return true
+	case deleteSecret:
+		return false
+	default:
+		return current
+	}
+}
+
+func saveWizardChanges(store secretstore.Store, snapshots map[secretstore.Key]secretSnapshot, edits map[secretstore.Key]secretEdit, saveConfig func() error) error {
+	keys := []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey}
+	applied := make([]secretstore.Key, 0, len(keys))
+	for _, key := range keys {
+		edit := edits[key]
+		var err error
+		switch edit.action {
+		case setSecret:
+			err = store.Set(key, edit.value)
+		case deleteSecret:
+			err = store.Delete(key)
+		default:
+			continue
+		}
+		if err != nil {
+			return wizardSaveError(rollbackSecrets(store, snapshots, applied))
+		}
+		applied = append(applied, key)
+	}
+	if err := saveConfig(); err != nil {
+		return wizardSaveError(rollbackSecrets(store, snapshots, applied))
+	}
+	return nil
+}
+
+func rollbackSecrets(store secretstore.Store, snapshots map[secretstore.Key]secretSnapshot, applied []secretstore.Key) bool {
+	failed := false
+	for i := len(applied) - 1; i >= 0; i-- {
+		key := applied[i]
+		snapshot := snapshots[key]
+		var err error
+		if snapshot.exists {
+			err = store.Set(key, snapshot.value)
+		} else {
+			err = store.Delete(key)
+		}
+		if err != nil {
+			failed = true
+		}
+	}
+	return failed
+}
+
+func wizardSaveError(rollbackFailed bool) error {
+	if rollbackFailed {
+		return errors.New("設定の復元に失敗しました。OS資格情報ストアの設定を確認してください")
+	}
+	return errors.New("設定を保存できませんでした")
 }
 
 func promptChoice(wio wizardIO, label, current string, choices ...string) (string, error) {
@@ -232,14 +353,14 @@ func validChoice(value string, choices ...string) bool {
 
 func envPresent(lookup func(string) (string, bool), name string) bool {
 	value, ok := lookup(name)
-	return ok && value != ""
+	return ok && strings.TrimSpace(value) != ""
 }
 
-func printSummary(wio wizardIO, cfg *core.Config, githubEnv, claudeEnv, openAIEnv bool) error {
+func printSummary(wio wizardIO, cfg *core.Config, configured map[secretstore.Key]bool, githubEnv, claudeEnv, openAIEnv bool) error {
 	lines := []string{
-		"GitHub token: " + secretStatus(cfg.GithubToken != "", githubEnv),
-		"Anthropic API key: " + secretStatus(cfg.AnthropicAPIKey != "", claudeEnv),
-		"OpenAI API key: " + secretStatus(cfg.OpenAIAPIKey != "", openAIEnv),
+		"GitHub token: " + secretStatus(configured[secretstore.GitHubToken], githubEnv),
+		"Anthropic API key: " + secretStatus(configured[secretstore.AnthropicAPIKey], claudeEnv),
+		"OpenAI API key: " + secretStatus(configured[secretstore.OpenAIAPIKey], openAIEnv),
 		"既定provider: " + cfg.DefaultProvider,
 		"既定言語: " + cfg.DefaultLanguage,
 	}
@@ -253,13 +374,13 @@ func printSummary(wio wizardIO, cfg *core.Config, githubEnv, claudeEnv, openAIEn
 
 func secretStatus(stored, environment bool) string {
 	if stored && environment {
-		return "ファイル設定済み（環境変数が優先）"
+		return "Keychain設定済み（環境変数が優先）"
 	}
 	if environment {
 		return "環境変数で設定済み"
 	}
 	if stored {
-		return "ファイル設定済み"
+		return "Keychain設定済み"
 	}
 	return "未設定"
 }

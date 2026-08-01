@@ -1,8 +1,8 @@
 # Reporepo 仕様書 兼 実装計画
 
-最終更新: 2026-07-31
+最終更新: 2026-08-01
 バージョン: 0.1.0 (開発中)
-ステータス: コア・TUI・CLI実装完了 / OS Keychain移行仕様策定済み・実装未完了
+ステータス: コア・TUI・CLI・OS資格情報ストア移行実装完了 / OS別手動スモークテスト未完了
 
 ---
 
@@ -243,13 +243,13 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、設定の読み書き、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAIクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
+データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAIクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
 
 ### 9.2 未完了 / 要対応
 
-以下は引き継ぎ時に必ず対応すること。
+以下はリリース前に確認すること。
 
-**OS Keychain移行（最優先）。** 現在の実装はGitHub tokenとAPI keyを `config.json` に平文保存する。2.7、4.5、4.6、5.1、5.2、6.3の仕様に従い、OS資格情報ストアへの保存、環境変数優先、旧形式移行、平文フォールバック禁止を実装すること。
+**OS資格情報ストアの手動スモーク。** macOS Keychain、Windows Credential Manager、Linux desktopのSecret Serviceで、ダミー値によるSet / Get / Deleteと旧形式移行を確認する。自動テストは実OS資格情報ストアへアクセスしない。
 
 **Linux / *BSDの動作確認。** Secret ServiceとD-Busが利用できるデスクトップ環境、利用できないヘッドレス環境の両方で、成功または安全で実行可能なエラー案内になることを確認する。
 

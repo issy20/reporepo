@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/spf13/cobra"
 )
 
@@ -15,18 +16,30 @@ func Execute() error {
 }
 
 type commandDependencies struct {
-	run        func() error
-	loadConfig func() (*core.Config, error)
-	saveConfig func(*core.Config) error
-	configPath func() (string, error)
-	dataPath   func() (string, error)
+	run         func() error
+	loadConfig  func() (*core.Config, error)
+	saveConfig  func(*core.Config) error
+	secretStore secretstore.Store
+	configPath  func() (string, error)
+	dataPath    func() (string, error)
 }
 
 // NewRootCommand は reporepo の CLI コマンドツリーを構築する。
 func NewRootCommand() *cobra.Command {
+	secrets := secretstore.NewKeyringStore()
 	return newRootCommand(commandDependencies{
-		run: runApplication, loadConfig: core.LoadStoredConfig, saveConfig: core.SaveConfig,
-		configPath: core.ConfigFilePath, dataPath: dataFilePath,
+		run: runApplication, loadConfig: func() (*core.Config, error) {
+			cfg, legacy, err := core.LoadConfigFile()
+			if err != nil {
+				return nil, err
+			}
+			if err := migrateLegacySecrets(cfg, legacy, secrets, core.SaveConfig); err != nil {
+				return nil, err
+			}
+			return cfg, nil
+		}, saveConfig: core.SaveConfig,
+		secretStore: secrets,
+		configPath:  core.ConfigFilePath, dataPath: dataFilePath,
 	})
 }
 
@@ -46,7 +59,7 @@ func newRootCommand(deps commandDependencies) *cobra.Command {
 
 	runCommand := &cobra.Command{Use: "run", Short: "TUI を起動する", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error { return deps.run() }}
 	configCommand := &cobra.Command{Use: "config", Short: "設定を対話的に編集する", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		return runConfigWizard(cmd.InOrStdin(), cmd.OutOrStdout(), deps.loadConfig, deps.saveConfig)
+		return runConfigWizard(cmd.InOrStdin(), cmd.OutOrStdout(), deps.loadConfig, deps.saveConfig, deps.secretStore)
 	}}
 	versionCommand := &cobra.Command{Use: "version", Short: "バージョンを表示する", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "reporepo %s\n", version)

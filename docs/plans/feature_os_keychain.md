@@ -1,6 +1,6 @@
 # Plan: OS Keychainによるsecret管理
 
-Status: ready
+Status: implemented（OS別手動スモークテストを除く）
 
 ## 目的
 
@@ -339,122 +339,122 @@ type secretEdit struct {
 
 ### A. SecretStore境界
 
-- [ ] Key定数が仕様のaccount名と一致する
-- [ ] 有効KeyのGet / Set / Deleteをbackendへ委譲する
-- [ ] service名として`reporepo`を渡す
-- [ ] backendのnot foundをErrNotFoundへ変換する
-- [ ] Getのbackend障害をnot foundと区別する
-- [ ] Deleteのnot foundを成功として扱う
-- [ ] 空secretのSetを拒否する
-- [ ] 無効Keyを拒否する
-- [ ] adapter errorにsecretを含めない
-- [ ] fake backendで実OS Keychainへ触れずテストできる
+- [x] Key定数が仕様のaccount名と一致する
+- [x] 有効KeyのGet / Set / Deleteをbackendへ委譲する
+- [x] service名として`reporepo`を渡す
+- [x] backendのnot foundをErrNotFoundへ変換する
+- [x] Getのbackend障害をnot foundと区別する
+- [x] Deleteのnot foundを成功として扱う
+- [x] 空secretのSetを拒否する
+- [x] 無効Keyを拒否する
+- [x] adapter errorにsecretを含めない
+- [x] fake backendで実OS Keychainへ触れずテストできる
 
 ### B. Config JSON
 
-- [ ] Configをmarshalしても3つのsecret名と値を含まない
-- [ ] SaveConfigがprovider / languageだけを保存する
-- [ ] 新形式Configを読み込む
-- [ ] 旧形式ConfigからLegacySecretsを分離する
-- [ ] 旧secretをruntime Configへ直接設定しない
-- [ ] Config file不在時に既定値と空LegacySecretsを返す
-- [ ] 壊れたJSONをエラーにする
-- [ ] 0600・アトミック保存を維持する
-- [ ] 既存のConfig環境変数テストを新しい責務へ移行する
+- [x] Configをmarshalしても3つのsecret名と値を含まない
+- [x] SaveConfigがprovider / languageだけを保存する
+- [x] 新形式Configを読み込む
+- [x] 旧形式ConfigからLegacySecretsを分離する
+- [x] 旧secretをruntime Configへ直接設定しない
+- [x] Config file不在時に既定値と空LegacySecretsを返す
+- [x] 壊れたJSONをエラーにする
+- [x] 0600・アトミック保存を維持する
+- [x] 既存のConfig環境変数テストを新しい責務へ移行する
 
 ### C. 実行時secret解決
 
-- [ ] 環境変数がKeychainより優先される
-- [ ] 環境変数があるKeyはKeychain Getを呼ばない
-- [ ] 環境変数がないKeyをKeychainから取得する
-- [ ] ErrNotFoundを未設定として扱う
-- [ ] 両AI secret未設定で起動しない
-- [ ] Claudeだけでproviderをclaudeへ補正する
-- [ ] OpenAIだけでproviderをopenaiへ補正する
-- [ ] 両AI secretで有効providerを維持する
-- [ ] GitHub secret未設定でtokenなし起動する
-- [ ] 環境変数の値をKeychainへSetしない
-- [ ] 解決後にConfig fileを書き換えない
-- [ ] backend障害の生エラーとsecretを表示しない
-- [ ] ヘッドレス相当のbackend障害でもAI環境変数だけで起動する
+- [x] 環境変数がKeychainより優先される
+- [x] 環境変数があるKeyはKeychain Getを呼ばない
+- [x] 環境変数がないKeyをKeychainから取得する
+- [x] ErrNotFoundを未設定として扱う
+- [x] 両AI secret未設定で起動しない
+- [x] Claudeだけでproviderをclaudeへ補正する
+- [x] OpenAIだけでproviderをopenaiへ補正する
+- [x] 両AI secretで有効providerを維持する
+- [x] GitHub secret未設定でtokenなし起動する
+- [x] 環境変数の値をKeychainへSetしない
+- [x] 解決後にConfig fileを書き換えない
+- [x] backend障害の生エラーとsecretを表示しない
+- [x] ヘッドレス相当のbackend障害でもAI環境変数だけで起動する
 
 ### D. Wizard読み込み・表示
 
-- [ ] Wizardが非secret設定とKeychain secretを別々に読む
-- [ ] Keychain secret値をpromptへ表示しない
-- [ ] サマリーがKeychain設定済みを表示する
-- [ ] 環境変数は存在状態だけを表示する
-- [ ] 環境変数の値を編集対象にしない
-- [ ] Keychain Get障害時にpromptを開始しない
-- [ ] wizard errorへsecretを含めない
+- [x] Wizardが非secret設定とKeychain secretを別々に読む
+- [x] Keychain secret値をpromptへ表示しない
+- [x] サマリーがKeychain設定済みを表示する
+- [x] 環境変数は存在状態だけを表示する
+- [x] 環境変数の値を編集対象にしない
+- [x] Keychain Get障害時にpromptを開始しない
+- [x] wizard errorへsecretを含めない
 
 ### E. Wizard編集・保存
 
-- [ ] 空入力をkeep actionにする
-- [ ] 新値をset actionにする
-- [ ] `-`をdelete actionにする
-- [ ] keepではSet / Deleteを呼ばない
-- [ ] setではKeychainへ新値を保存する
-- [ ] deleteではKeychainから削除する
-- [ ] secret保存後に非secret Configを保存する
-- [ ] Config JSONに入力secretを含めない
-- [ ] 成功時だけ成功メッセージを表示する
-- [ ] cancel / EOFでKeychainとConfigを変更しない
+- [x] 空入力をkeep actionにする
+- [x] 新値をset actionにする
+- [x] `-`をdelete actionにする
+- [x] keepではSet / Deleteを呼ばない
+- [x] setではKeychainへ新値を保存する
+- [x] deleteではKeychainから削除する
+- [x] secret保存後に非secret Configを保存する
+- [x] Config JSONに入力secretを含めない
+- [x] 成功時だけ成功メッセージを表示する
+- [x] cancel / EOFでKeychainとConfigを変更しない
 
 ### F. Wizard rollback
 
-- [ ] 2つ目のsecret Set失敗で1つ目を元へ戻す
-- [ ] Delete後の後続失敗で削除値を復元する
-- [ ] Config保存失敗で全secretを元へ戻す
-- [ ] 元が未登録のSetをrollback時にDeleteする
-- [ ] 元が登録済みのSetをrollback時に旧値へ戻す
-- [ ] rollbackを逆順で行う
-- [ ] rollback失敗を安全な復旧エラーにする
-- [ ] rollback errorにsecretを含めない
+- [x] 2つ目のsecret Set失敗で1つ目を元へ戻す
+- [x] Delete後の後続失敗で削除値を復元する
+- [x] Config保存失敗で全secretを元へ戻す
+- [x] 元が未登録のSetをrollback時にDeleteする
+- [x] 元が登録済みのSetをrollback時に旧値へ戻す
+- [x] rollbackを逆順で行う
+- [x] rollback失敗を安全な復旧エラーにする
+- [x] rollback errorにsecretを含めない
 
 ### G. 旧形式移行
 
-- [ ] legacyがなければKeychainとConfig Saveを呼ばない
-- [ ] 未登録Keyへlegacy secretをSetする
-- [ ] 既存Keyをlegacy値で上書きしない
-- [ ] 空legacy secretを無視する
-- [ ] 全secret成功後に新形式Configを保存する
-- [ ] 移行後JSONにsecret名と値を含めない
-- [ ] Keychain失敗時に旧JSONを変更しない
-- [ ] Config保存失敗時に今回SetしたKeyをrollbackする
-- [ ] 元から存在したKeyをrollbackで変更しない
-- [ ] 同じ移行を複数回実行しても結果が変わらない
-- [ ] 移行失敗時にlegacy secretをruntime利用しない
-- [ ] 移行エラーにsecretを含めない
+- [x] legacyがなければKeychainとConfig Saveを呼ばない
+- [x] 未登録Keyへlegacy secretをSetする
+- [x] 既存Keyをlegacy値で上書きしない
+- [x] 空legacy secretを無視する
+- [x] 全secret成功後に新形式Configを保存する
+- [x] 移行後JSONにsecret名と値を含めない
+- [x] Keychain失敗時に旧JSONを変更しない
+- [x] Config保存失敗時に今回SetしたKeyをrollbackする
+- [x] 元から存在したKeyをrollbackで変更しない
+- [x] 同じ移行を複数回実行しても結果が変わらない
+- [x] 移行失敗時にlegacy secretをruntime利用しない
+- [x] 移行エラーにsecretを含めない
 
 ### H. CLI配線
 
-- [ ] root commandが本番SecretStoreをwizardへ渡す
-- [ ] applicationが同じSecretStoreからruntime secretを解決する
-- [ ] config / run以外はSecretStoreへアクセスしない
-- [ ] help / version / whereがKeychain permission UIを発生させない
-- [ ] Keychain unavailableのwizardが安全なエラーを返す
-- [ ] Keychain unavailableでも環境変数だけのrunが成功境界へ進む
+- [x] root commandが本番SecretStoreをwizardへ渡す
+- [x] applicationが同じSecretStoreからruntime secretを解決する
+- [x] config / run以外はSecretStoreへアクセスしない
+- [x] help / version / whereがKeychain permission UIを発生させない
+- [x] Keychain unavailableのwizardが安全なエラーを返す
+- [x] Keychain unavailableでも環境変数だけのrunが成功境界へ進む
 
 ### I. セキュリティ回帰
 
-- [ ] stdoutへsecretを含めない
-- [ ] stderrへsecretを含めない
-- [ ] errorへsecretを含めない
-- [ ] config.jsonへsecret名と値を含めない
-- [ ] data.jsonへsecretを含めない
-- [ ] テストfailure messageへ実secretを出さない
-- [ ] 環境変数をKeychain / JSONへ書き戻さない
-- [ ] 平文fallback実装が存在しない
+- [x] stdoutへsecretを含めない
+- [x] stderrへsecretを含めない
+- [x] errorへsecretを含めない
+- [x] config.jsonへsecret名と値を含めない
+- [x] data.jsonへsecretを含めない
+- [x] テストfailure messageへ実secretを出さない
+- [x] 環境変数をKeychain / JSONへ書き戻さない
+- [x] 平文fallback実装が存在しない
 
 ### J. ビルド・手動確認
 
-- [ ] macOSでKeychain Set / Get / Deleteを手動確認する
+- [x] macOSでKeychain Set / Get / Deleteを手動確認する
 - [ ] Linux desktopでSecret Serviceを手動確認する
 - [ ] Linux headless相当で安全なエラーを確認する
 - [ ] WindowsでCredential Managerを確認する
-- [ ] darwin / linux / windowsのamd64 / arm64 buildが成功する
-- [ ] CGO_ENABLED=0で対象buildが成功する
+- [x] darwin / linux / windowsのamd64 / arm64 buildが成功する
+- [x] CGO_ENABLED=0で対象buildが成功する
 
 ## 実装順序
 

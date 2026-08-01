@@ -2,14 +2,15 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/issy20/reporepo/internal/clients"
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/issy20/reporepo/internal/store"
 	"github.com/issy20/reporepo/internal/tui"
 )
@@ -22,14 +23,18 @@ const (
 )
 
 type applicationDependencies struct {
-	loadConfig func() (*core.Config, error)
-	dataPath   func() (string, error)
-	newHTTP    func() *http.Client
-	newStore   func(string) *store.Store
-	newGitHub  func(*http.Client, string, string) clients.GitHubClient
-	newClaude  func(string, string, *http.Client) clients.AIClient
-	newOpenAI  func(string, string, *http.Client) clients.AIClient
-	runTUI     func(tui.Dependencies, *core.Config) error
+	loadConfig     func() (*core.Config, error)
+	loadConfigFile func() (*core.Config, core.LegacySecrets, error)
+	saveConfig     func(*core.Config) error
+	secretStore    secretstore.Store
+	warn           func(string)
+	dataPath       func() (string, error)
+	newHTTP        func() *http.Client
+	newStore       func(string) *store.Store
+	newGitHub      func(*http.Client, string, string) clients.GitHubClient
+	newClaude      func(string, string, *http.Client) clients.AIClient
+	newOpenAI      func(string, string, *http.Client) clients.AIClient
+	runTUI         func(tui.Dependencies, *core.Config) error
 }
 
 func runApplication() error {
@@ -38,10 +43,15 @@ func runApplication() error {
 
 func defaultApplicationDependencies() applicationDependencies {
 	return applicationDependencies{
-		loadConfig: core.LoadConfig,
-		dataPath:   dataFilePath,
-		newHTTP:    func() *http.Client { return &http.Client{Timeout: applicationHTTPTimeout} },
-		newStore:   store.NewStore,
+		loadConfigFile: core.LoadConfigFile,
+		saveConfig:     core.SaveConfig,
+		secretStore:    secretstore.NewKeyringStore(),
+		warn: func(message string) {
+			_, _ = fmt.Fprintln(os.Stderr, "警告:", message)
+		},
+		dataPath: dataFilePath,
+		newHTTP:  func() *http.Client { return &http.Client{Timeout: applicationHTTPTimeout} },
+		newStore: store.NewStore,
 		newGitHub: func(client *http.Client, baseURL, token string) clients.GitHubClient {
 			return clients.NewGitHubClient(client, baseURL, token)
 		},
@@ -62,6 +72,9 @@ func runApplicationWith(deps applicationDependencies) error {
 	if deps.dataPath == nil {
 		deps.dataPath = defaults.dataPath
 	}
+	if deps.warn == nil {
+		deps.warn = defaults.warn
+	}
 	if deps.newHTTP == nil {
 		deps.newHTTP = defaults.newHTTP
 	}
@@ -77,10 +90,23 @@ func runApplicationWith(deps applicationDependencies) error {
 	if deps.newOpenAI == nil {
 		deps.newOpenAI = defaults.newOpenAI
 	}
-	if deps.loadConfig == nil {
+	if deps.loadConfig == nil && deps.loadConfigFile == nil {
 		return errors.New("設定の読み込み処理を利用できません")
 	}
-	cfg, err := deps.loadConfig()
+	var cfg *core.Config
+	var err error
+	if deps.loadConfigFile != nil {
+		var legacy core.LegacySecrets
+		cfg, legacy, err = deps.loadConfigFile()
+		if err == nil {
+			err = migrateLegacySecrets(cfg, legacy, deps.secretStore, deps.saveConfig)
+			if isMigrationFailure(err) {
+				return err
+			}
+		}
+	} else {
+		cfg, err = deps.loadConfig()
+	}
 	if err != nil {
 		return errors.New("設定を読み込めませんでした")
 	}
@@ -88,24 +114,15 @@ func runApplicationWith(deps applicationDependencies) error {
 		return errors.New("設定を読み込めませんでした")
 	}
 
-	runtimeConfig := *cfg
-	runtimeConfig.GithubToken = strings.TrimSpace(runtimeConfig.GithubToken)
-	runtimeConfig.AnthropicAPIKey = strings.TrimSpace(runtimeConfig.AnthropicAPIKey)
-	runtimeConfig.OpenAIAPIKey = strings.TrimSpace(runtimeConfig.OpenAIAPIKey)
+	runtimeConfig, warnings, err := resolveRuntimeSecrets(cfg, deps.secretStore)
+	for _, warning := range warnings {
+		deps.warn(warning)
+	}
+	if err != nil {
+		return err
+	}
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
-	if !hasClaude && !hasOpenAI {
-		return errors.New("ANTHROPIC_API_KEY または OPENAI_API_KEY を設定してください")
-	}
-	if (runtimeConfig.DefaultProvider == "claude" && !hasClaude) ||
-		(runtimeConfig.DefaultProvider == "openai" && !hasOpenAI) ||
-		(runtimeConfig.DefaultProvider != "claude" && runtimeConfig.DefaultProvider != "openai") {
-		if hasClaude {
-			runtimeConfig.DefaultProvider = "claude"
-		} else {
-			runtimeConfig.DefaultProvider = "openai"
-		}
-	}
 
 	path, err := deps.dataPath()
 	if err != nil {
@@ -129,7 +146,7 @@ func runApplicationWith(deps applicationDependencies) error {
 		AI:     ai,
 		Now:    time.Now,
 	}
-	if err := deps.runTUI(tuiDeps, &runtimeConfig); err != nil {
+	if err := deps.runTUI(tuiDeps, runtimeConfig); err != nil {
 		return errors.New("TUIを起動できませんでした")
 	}
 	return nil
