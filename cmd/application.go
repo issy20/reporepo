@@ -19,6 +19,7 @@ const (
 	githubAPIURL           = "https://api.github.com"
 	defaultClaudeModel     = "claude-sonnet-4-6"
 	defaultOpenAIModel     = "gpt-4o-mini"
+	defaultGeminiModel     = "gemini-3.5-flash"
 	applicationHTTPTimeout = 2 * time.Minute
 )
 
@@ -34,6 +35,7 @@ type applicationDependencies struct {
 	newGitHub      func(*http.Client, string, string) clients.GitHubClient
 	newClaude      func(string, string, *http.Client) clients.AIClient
 	newOpenAI      func(string, string, *http.Client) clients.AIClient
+	newGemini      func(string, string) (clients.AIClient, error)
 	runTUI         func(tui.Dependencies, *core.Config) error
 }
 
@@ -60,6 +62,9 @@ func defaultApplicationDependencies() applicationDependencies {
 		},
 		newOpenAI: func(key, model string, client *http.Client) clients.AIClient {
 			return clients.NewOpenAIClient(key, model, client)
+		},
+		newGemini: func(key, model string) (clients.AIClient, error) {
+			return clients.NewGeminiClient(key, model)
 		},
 		runTUI: func(deps tui.Dependencies, cfg *core.Config) error {
 			return tui.Run(deps, cfg)
@@ -89,6 +94,9 @@ func runApplicationWith(deps applicationDependencies) error {
 	}
 	if deps.newOpenAI == nil {
 		deps.newOpenAI = defaults.newOpenAI
+	}
+	if deps.newGemini == nil {
+		deps.newGemini = defaults.newGemini
 	}
 	if deps.loadConfig == nil && deps.loadConfigFile == nil {
 		return errors.New("設定の読み込み処理を利用できません")
@@ -123,6 +131,7 @@ func runApplicationWith(deps applicationDependencies) error {
 	}
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
+	hasGemini := runtimeConfig.GeminiAPIKey != ""
 
 	path, err := deps.dataPath()
 	if err != nil {
@@ -133,12 +142,19 @@ func runApplicationWith(deps applicationDependencies) error {
 	}
 
 	httpClient := deps.newHTTP()
-	ai := make(map[string]clients.AIClient, 2)
+	ai := make(map[string]clients.AIClient, 3)
 	if hasClaude {
 		ai["claude"] = deps.newClaude(runtimeConfig.AnthropicAPIKey, defaultClaudeModel, httpClient)
 	}
 	if hasOpenAI {
 		ai["openai"] = deps.newOpenAI(runtimeConfig.OpenAIAPIKey, defaultOpenAIModel, httpClient)
+	}
+	if hasGemini {
+		geminiClient, err := deps.newGemini(runtimeConfig.GeminiAPIKey, defaultGeminiModel)
+		if err != nil {
+			return errors.New("Gemini clientを初期化できませんでした")
+		}
+		ai["gemini"] = geminiClient
 	}
 	tuiDeps := tui.Dependencies{
 		Store:  deps.newStore(path),

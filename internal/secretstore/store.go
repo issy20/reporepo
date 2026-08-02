@@ -8,6 +8,7 @@ const (
 	GitHubToken     Key = "github-token"
 	AnthropicAPIKey Key = "anthropic-api-key"
 	OpenAIAPIKey    Key = "openai-api-key"
+	GeminiAPIKey    Key = "gemini-api-key"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 
 func (k Key) valid() bool {
 	switch k {
-	case GitHubToken, AnthropicAPIKey, OpenAIAPIKey:
+	case GitHubToken, AnthropicAPIKey, OpenAIAPIKey, GeminiAPIKey:
 		return true
 	default:
 		return false

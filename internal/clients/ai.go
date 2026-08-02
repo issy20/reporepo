@@ -21,6 +21,11 @@ type AIClient interface {
 	Generate(ctx context.Context, meta *core.RepoMeta, readme, language string) (*core.Analysis, error)
 }
 
+// AIIdentity はキャッシュをproviderとmodelの組み合わせで識別するための任意境界。
+type AIIdentity interface {
+	ProviderModel() (provider, model string)
+}
+
 func buildPrompts(meta *core.RepoMeta, readme, language string) (system, user string, err error) {
 	if meta == nil {
 		return "", "", errors.New("metadata is nil")

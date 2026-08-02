@@ -113,6 +113,7 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	updated.GithubToken = ""
 	updated.AnthropicAPIKey = ""
 	updated.OpenAIAPIKey = ""
+	updated.GeminiAPIKey = ""
 	stored, err := loadWizardSecrets(deps.secrets)
 	if err != nil {
 		return errors.New("OS資格情報ストアから設定を読み込めませんでした")
@@ -130,10 +131,15 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	if err != nil {
 		return inputResult(err)
 	}
+	geminiEdit, err := promptSecretEdit(deps.io, "Gemini API key", stored[secretstore.GeminiAPIKey].exists)
+	if err != nil {
+		return inputResult(err)
+	}
 
 	githubEnv := envPresent(deps.lookupEnv, githubTokenEnv)
 	claudeEnv := envPresent(deps.lookupEnv, anthropicAPIKeyEnv)
 	openAIEnv := envPresent(deps.lookupEnv, openAIAPIKeyEnv)
+	geminiEnv := envPresent(deps.lookupEnv, geminiAPIKeyEnv)
 	if githubEnv {
 		if err := deps.io.Println("GITHUB_TOKEN が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
@@ -149,31 +155,41 @@ func runConfigWizardWith(deps wizardDependencies) error {
 			return inputResult(err)
 		}
 	}
+	if geminiEnv {
+		if err := deps.io.Println("GEMINI_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
+			return inputResult(err)
+		}
+	}
 
 	for {
 		fallback := updated.DefaultProvider
-		if !validChoice(fallback, "claude", "openai") {
+		if !validChoice(fallback, "claude", "openai", "gemini") {
 			fallback = "claude"
 		}
-		updated.DefaultProvider, err = promptChoice(deps.io, "既定provider", fallback, "claude", "openai")
+		updated.DefaultProvider, err = promptChoice(deps.io, "既定provider", fallback, "claude", "openai", "gemini")
 		if err != nil {
 			return inputResult(err)
 		}
 		claudeConfigured := configuredAfterEdit(stored[secretstore.AnthropicAPIKey].exists, claudeEdit)
 		openAIConfigured := configuredAfterEdit(stored[secretstore.OpenAIAPIKey].exists, openAIEdit)
+		geminiConfigured := configuredAfterEdit(stored[secretstore.GeminiAPIKey].exists, geminiEdit)
 		available := (updated.DefaultProvider == "claude" && (claudeConfigured || claudeEnv)) ||
-			(updated.DefaultProvider == "openai" && (openAIConfigured || openAIEnv))
+			(updated.DefaultProvider == "openai" && (openAIConfigured || openAIEnv)) ||
+			(updated.DefaultProvider == "gemini" && (geminiConfigured || geminiEnv))
 		if available {
 			break
 		}
 		if err := deps.io.Println("選択したproviderのAPI keyがありません。secretを設定するか、利用可能なproviderを選択してください。"); err != nil {
 			return inputResult(err)
 		}
-		if !claudeConfigured && !claudeEnv && !openAIConfigured && !openAIEnv {
+		if !claudeConfigured && !claudeEnv && !openAIConfigured && !openAIEnv && !geminiConfigured && !geminiEnv {
 			if claudeEdit, err = promptSecretEdit(deps.io, "Anthropic API key", stored[secretstore.AnthropicAPIKey].exists); err != nil {
 				return inputResult(err)
 			}
 			if openAIEdit, err = promptSecretEdit(deps.io, "OpenAI API key", stored[secretstore.OpenAIAPIKey].exists); err != nil {
+				return inputResult(err)
+			}
+			if geminiEdit, err = promptSecretEdit(deps.io, "Gemini API key", stored[secretstore.GeminiAPIKey].exists); err != nil {
 				return inputResult(err)
 			}
 		}
@@ -192,8 +208,9 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		secretstore.GitHubToken:     configuredAfterEdit(stored[secretstore.GitHubToken].exists, githubEdit),
 		secretstore.AnthropicAPIKey: configuredAfterEdit(stored[secretstore.AnthropicAPIKey].exists, claudeEdit),
 		secretstore.OpenAIAPIKey:    configuredAfterEdit(stored[secretstore.OpenAIAPIKey].exists, openAIEdit),
+		secretstore.GeminiAPIKey:    configuredAfterEdit(stored[secretstore.GeminiAPIKey].exists, geminiEdit),
 	}
-	if err := printSummary(deps.io, &updated, configured, githubEnv, claudeEnv, openAIEnv); err != nil {
+	if err := printSummary(deps.io, &updated, configured, githubEnv, claudeEnv, openAIEnv, geminiEnv); err != nil {
 		return inputResult(err)
 	}
 	for {
@@ -204,7 +221,7 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "y", "yes":
 			edits := map[secretstore.Key]secretEdit{
-				secretstore.GitHubToken: githubEdit, secretstore.AnthropicAPIKey: claudeEdit, secretstore.OpenAIAPIKey: openAIEdit,
+				secretstore.GitHubToken: githubEdit, secretstore.AnthropicAPIKey: claudeEdit, secretstore.OpenAIAPIKey: openAIEdit, secretstore.GeminiAPIKey: geminiEdit,
 			}
 			if err := saveWizardChanges(deps.secrets, stored, edits, func() error { return deps.save(&updated) }); err != nil {
 				return err
@@ -247,8 +264,8 @@ func promptSecretEdit(wio wizardIO, label string, configured bool) (secretEdit, 
 }
 
 func loadWizardSecrets(store secretstore.Store) (map[secretstore.Key]secretSnapshot, error) {
-	snapshots := make(map[secretstore.Key]secretSnapshot, 3)
-	for _, key := range []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey} {
+	snapshots := make(map[secretstore.Key]secretSnapshot, 4)
+	for _, key := range []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey, secretstore.GeminiAPIKey} {
 		value, err := store.Get(key)
 		switch {
 		case err == nil:
@@ -274,7 +291,7 @@ func configuredAfterEdit(current bool, edit secretEdit) bool {
 }
 
 func saveWizardChanges(store secretstore.Store, snapshots map[secretstore.Key]secretSnapshot, edits map[secretstore.Key]secretEdit, saveConfig func() error) error {
-	keys := []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey}
+	keys := []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.OpenAIAPIKey, secretstore.GeminiAPIKey}
 	applied := make([]secretstore.Key, 0, len(keys))
 	for _, key := range keys {
 		edit := edits[key]
@@ -356,11 +373,12 @@ func envPresent(lookup func(string) (string, bool), name string) bool {
 	return ok && strings.TrimSpace(value) != ""
 }
 
-func printSummary(wio wizardIO, cfg *core.Config, configured map[secretstore.Key]bool, githubEnv, claudeEnv, openAIEnv bool) error {
+func printSummary(wio wizardIO, cfg *core.Config, configured map[secretstore.Key]bool, githubEnv, claudeEnv, openAIEnv, geminiEnv bool) error {
 	lines := []string{
 		"GitHub token: " + secretStatus(configured[secretstore.GitHubToken], githubEnv),
 		"Anthropic API key: " + secretStatus(configured[secretstore.AnthropicAPIKey], claudeEnv),
 		"OpenAI API key: " + secretStatus(configured[secretstore.OpenAIAPIKey], openAIEnv),
+		"Gemini API key: " + secretStatus(configured[secretstore.GeminiAPIKey], geminiEnv),
 		"既定provider: " + cfg.DefaultProvider,
 		"既定言語: " + cfg.DefaultLanguage,
 	}

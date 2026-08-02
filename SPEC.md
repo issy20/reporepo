@@ -1,6 +1,6 @@
 # Reporepo 仕様書 兼 実装計画
 
-最終更新: 2026-08-01
+最終更新: 2026-08-02
 バージョン: 0.1.0 (開発中)
 ステータス: コア・TUI・CLI・OS資格情報ストア移行実装完了 / OS別手動スモークテスト未完了
 
@@ -8,7 +8,7 @@
 
 ## 1. 概要
 
-Reporepo は、GitHub リポジトリ名（`owner/repo`）を入力すると、GitHub から情報を取得し、AI（Claude / OpenAI）が「要約・技術解説・技術的背景」を生成して表示する **TUI（ターミナルUI）アプリ**である。生成結果はローカルに保存され、履歴・お気に入りから再閲覧できる。最先端の技術やトレンドを、リポジトリ単位で学習することを目的とする。
+Reporepo は、GitHub リポジトリ名（`owner/repo`）を入力すると、GitHub から情報を取得し、AI（Claude / OpenAI / Gemini）が「要約・技術解説・技術的背景」を生成して表示する **TUI（ターミナルUI）アプリ**である。生成結果はローカルに保存され、履歴・お気に入りから再閲覧できる。最先端の技術やトレンドを、リポジトリ単位で学習することを目的とする。
 
 ### 設計の背景にある意思決定
 
@@ -32,7 +32,7 @@ GitHub には公式の Trending API が存在しない。スクレイピング�
 
 ### 2.2 AI プロバイダ
 
-Claude（Anthropic Messages API）と OpenAI（Chat Completions API）の両方に対応し、実行時に `p` キーでトグルできる。出力は JSON 構造化出力を強制し、UI のセクションへマッピングする。
+Claude（Anthropic Messages API）、OpenAI（Chat Completions API）、Gemini（Gemini Developer API）に対応する。`p` キーは利用可能なproviderを `claude` → `openai` → `gemini` の固定順で巡回する。Geminiの既定モデルは安定版 `gemini-3.5-flash` とする。出力は JSON 構造化出力を要求し、UI のセクションへマッピングする。
 
 ### 2.3 多言語
 
@@ -52,17 +52,18 @@ Claude（Anthropic Messages API）と OpenAI（Chat Completions API）の両方�
 
 ### 2.7 設定
 
-`reporepo config` で GitHub token、Anthropic API key、OpenAI API key、既定AI provider、既定言語を対話的に設定する。
+`reporepo config` で GitHub token、Anthropic API key、OpenAI API key、Gemini API key、既定AI provider、既定言語を対話的に設定する。
 
 GitHub tokenとAPI key（以下「secret」）は設定JSONへ保存せず、OSの資格情報ストアへ保存する。macOSではKeychain、WindowsではCredential Manager、Linux/*BSDではSecret Serviceを利用する。資格情報ストア上のservice名は `reporepo` とし、secretごとに次のaccount名を使用する。
 
 - `github-token`
 - `anthropic-api-key`
 - `openai-api-key`
+- `gemini-api-key`
 
 `config.json` には `default_provider` と `default_language` のみを保存する。実行時のsecret解決順序は次のとおりとする。
 
-1. 環境変数（`GITHUB_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）
+1. 環境変数（`GITHUB_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`）
 2. OSの資格情報ストア
 3. 未設定
 
@@ -88,7 +89,7 @@ OS資格情報ストアは平文設定ファイルより安全な保存先だが
 
 ### 4.1 レイヤ構成
 
-最下層に非secret設定管理（`internal/core/config.go`）、OS資格情報ストア境界（`internal/secretstore`）、解析履歴の永続化（`internal/store`）を置く。その上に外部クライアント（`internal/clients`: GitHub、Claude、OpenAI）を置く。最上層にTUI（`internal/tui`）を置き、CLIエントリ（`cmd`）が設定・secret・クライアントを束ねる。
+最下層に非secret設定管理（`internal/core/config.go`）、OS資格情報ストア境界（`internal/secretstore`）、解析履歴の永続化（`internal/store`）を置く。その上に外部クライアント（`internal/clients`: GitHub、Claude、OpenAI、Gemini）を置く。最上層にTUI（`internal/tui`）を置き、CLIエントリ（`cmd`）が設定・secret・クライアントを束ねる。
 
 ### 4.2 ディレクトリ構成
 
@@ -116,6 +117,7 @@ reporepo/
       ai.go                    AI 抽象、プロンプト構築、JSON 抽出、プロバイダ生成
       claude.go                Claude Messages API 実装
       openai.go                OpenAI Chat Completions 実装
+      gemini.go                Gemini Developer API 実装
     tui/
       model.go                 Bubble Tea モデル定義と初期化
       update.go                キー処理・状態遷移
@@ -139,7 +141,7 @@ reporepo/
 
 ```text
 config.json（provider / language）
-  + OS資格情報ストア（GitHub / Anthropic / OpenAI）
+  + OS資格情報ストア（GitHub / Anthropic / OpenAI / Gemini）
   + 環境変数による上書き
   → 実行時Config
   → 利用可能なproviderだけをクライアント化

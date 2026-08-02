@@ -131,7 +131,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.language = toggle(m.language, "ja", "en")
 			return m, nil
 		case "p":
-			m.provider = toggle(m.provider, "claude", "openai")
+			m.provider = nextProvider(m.provider, availableProviders(m.ai))
 			return m, nil
 		case "f":
 			return m.toggleFavorite()

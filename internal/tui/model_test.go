@@ -114,7 +114,7 @@ func TestNewModelFallsBackForUnsupportedLanguage(t *testing.T) {
 	}
 }
 
-func TestNewModelFallsBackForUnsupportedProvider(t *testing.T) {
+func TestNewModelAcceptsGeminiProvider(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}}, &core.Config{
 		DefaultLanguage: "en",
 		DefaultProvider: "gemini",
@@ -123,8 +123,8 @@ func TestNewModelFallsBackForUnsupportedProvider(t *testing.T) {
 	if m.language != "en" {
 		t.Errorf("language = %q, want en", m.language)
 	}
-	if m.provider != "claude" {
-		t.Errorf("provider = %q, want claude", m.provider)
+	if m.provider != "gemini" {
+		t.Errorf("provider = %q, want gemini", m.provider)
 	}
 }
 

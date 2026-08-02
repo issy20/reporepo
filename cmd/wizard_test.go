@@ -201,13 +201,14 @@ func TestRunConfigWizardStoreFailureDoesNotPrompt(t *testing.T) {
 func TestRunConfigWizard_UpdatesAndSavesAfterYes(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	original := &core.Config{GithubToken: "old-token", AnthropicAPIKey: "old-key", OpenAIAPIKey: "remove-me", DefaultProvider: "claude", DefaultLanguage: "ja"}
 	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.GitHubToken: "old-token", secretstore.AnthropicAPIKey: "old-key", secretstore.OpenAIAPIKey: "remove-me",
 	})
 	var saved *core.Config
 	out := &bytes.Buffer{}
-	err := runConfigWizard(strings.NewReader(" new-token \n new-key \n-\nclaude\nen\nyes\n"), out,
+	err := runConfigWizard(strings.NewReader(" new-token \n new-key \n-\n\nclaude\nen\nyes\n"), out,
 		func() (*core.Config, error) { return original, nil },
 		func(cfg *core.Config) error { copy := *cfg; saved = &copy; return nil },
 		secretStore,
@@ -239,9 +240,10 @@ func TestRunConfigWizard_UpdatesAndSavesAfterYes(t *testing.T) {
 func TestRunConfigWizard_EnvironmentKeyIsNotSaved(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "github-environment-secret")
 	t.Setenv("ANTHROPIC_API_KEY", "environment-secret")
+	t.Setenv("GEMINI_API_KEY", "")
 	var saved *core.Config
 	out := &bytes.Buffer{}
-	err := runConfigWizard(strings.NewReader("\n\n\n\n\nY\n"), out,
+	err := runConfigWizard(strings.NewReader("\n\n\n\n\n\nY\n"), out,
 		func() (*core.Config, error) {
 			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
 		},
@@ -265,9 +267,10 @@ func TestRunConfigWizard_EnvironmentKeyIsNotSaved(t *testing.T) {
 func TestRunConfigWizard_InvalidChoicesAreRetried(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	var saved *core.Config
 	out := &bytes.Buffer{}
-	err := runConfigWizard(strings.NewReader("\nkey\n\ninvalid\nclaude\nfr\nja\ny\n"), out,
+	err := runConfigWizard(strings.NewReader("\nkey\n\n\ninvalid\nclaude\nfr\nja\ny\n"), out,
 		func() (*core.Config, error) {
 			return &core.Config{DefaultProvider: "broken", DefaultLanguage: "broken"}, nil
 		},
@@ -280,7 +283,7 @@ func TestRunConfigWizard_InvalidChoicesAreRetried(t *testing.T) {
 	if saved == nil || saved.DefaultProvider != "claude" || saved.DefaultLanguage != "ja" {
 		t.Fatalf("saved config = %#v", saved)
 	}
-	if !strings.Contains(out.String(), "claude, openai") || !strings.Contains(out.String(), "ja, en") {
+	if !strings.Contains(out.String(), "claude, openai, gemini") || !strings.Contains(out.String(), "ja, en") {
 		t.Fatalf("validation output = %s", out.String())
 	}
 }
@@ -312,7 +315,8 @@ func TestRunConfigWizard_SanitizesLoadAndSaveErrors(t *testing.T) {
 	}
 
 	t.Setenv("ANTHROPIC_API_KEY", "env-key")
-	saveErr := runConfigWizard(strings.NewReader("\n\n\n\n\ny\n"), io.Discard,
+	t.Setenv("GEMINI_API_KEY", "")
+	saveErr := runConfigWizard(strings.NewReader("\n\n\n\n\n\ny\n"), io.Discard,
 		func() (*core.Config, error) {
 			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
 		},

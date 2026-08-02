@@ -13,6 +13,7 @@ func TestConfigMarshalDoesNotContainSecrets(t *testing.T) {
 		GithubToken:     "github-sensitive-value",
 		AnthropicAPIKey: "anthropic-sensitive-value",
 		OpenAIAPIKey:    "openai-sensitive-value",
+		GeminiAPIKey:    "gemini-sensitive-value",
 		DefaultProvider: "claude",
 		DefaultLanguage: "ja",
 	}
@@ -22,8 +23,8 @@ func TestConfigMarshalDoesNotContainSecrets(t *testing.T) {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 	for _, forbidden := range []string{
-		"github_token", "anthropic_api_key", "openai_api_key",
-		cfg.GithubToken, cfg.AnthropicAPIKey, cfg.OpenAIAPIKey,
+		"github_token", "anthropic_api_key", "openai_api_key", "gemini_api_key",
+		cfg.GithubToken, cfg.AnthropicAPIKey, cfg.OpenAIAPIKey, cfg.GeminiAPIKey,
 	} {
 		if strings.Contains(string(data), forbidden) {
 			t.Fatalf("marshaled Config contains secret material")
@@ -41,6 +42,7 @@ func TestLoadConfigFileSeparatesLegacySecrets(t *testing.T) {
   "github_token": "legacy-github",
   "anthropic_api_key": "legacy-anthropic",
   "openai_api_key": "legacy-openai",
+  "gemini_api_key": "legacy-gemini",
   "default_provider": "openai",
   "default_language": "en"
 }`
@@ -52,7 +54,7 @@ func TestLoadConfigFileSeparatesLegacySecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfigFile() error = %v", err)
 	}
-	if cfg.GithubToken != "" || cfg.AnthropicAPIKey != "" || cfg.OpenAIAPIKey != "" {
+	if cfg.GithubToken != "" || cfg.AnthropicAPIKey != "" || cfg.OpenAIAPIKey != "" || cfg.GeminiAPIKey != "" {
 		t.Fatal("LoadConfigFile() copied legacy secrets into runtime Config")
 	}
 	if cfg.DefaultProvider != "openai" || cfg.DefaultLanguage != "en" {
@@ -62,6 +64,7 @@ func TestLoadConfigFileSeparatesLegacySecrets(t *testing.T) {
 		GithubToken:     "legacy-github",
 		AnthropicAPIKey: "legacy-anthropic",
 		OpenAIAPIKey:    "legacy-openai",
+		GeminiAPIKey:    "legacy-gemini",
 	}
 	if legacy != wantLegacy {
 		t.Fatal("LoadConfigFile() did not separate all legacy secrets")

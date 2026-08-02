@@ -61,7 +61,7 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 	}
 	fullName := owner + "/" + repo
 	existing := findEntry(entries, fullName)
-	if !force && existing != nil && existing.Analyses[m.language] != nil {
+	if !force && existing != nil && cacheMatches(existing.Analyses[m.language], m.provider, m.ai[m.provider]) {
 		if err := contextError(ctx); err != nil {
 			return nil, err
 		}
@@ -126,6 +126,25 @@ func (m Model) analyze(ctx context.Context, input string, force bool) (*core.Ent
 		return nil, errors.New("解析結果を保存できませんでした")
 	}
 	return entry, nil
+}
+
+func cacheMatches(analysis *core.Analysis, provider string, client clients.AIClient) bool {
+	if analysis == nil {
+		return false
+	}
+	// 旧履歴はprovider/modelを持たないため、従来どおり言語キャッシュとして扱う。
+	if analysis.Provider == "" {
+		return true
+	}
+	if analysis.Provider != provider {
+		return false
+	}
+	identity, ok := client.(clients.AIIdentity)
+	if !ok {
+		return true
+	}
+	wantProvider, wantModel := identity.ProviderModel()
+	return analysis.Provider == wantProvider && analysis.Model == wantModel
 }
 
 func cloneEntry(entry *core.Entry) *core.Entry {

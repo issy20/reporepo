@@ -125,6 +125,24 @@ func TestKeyringStoreDelegatesWithServiceAndAccount(t *testing.T) {
 	}
 }
 
+func TestKeyringStoreAcceptsGeminiAPIKeyAccount(t *testing.T) {
+	var gotService, gotAccount string
+	store := newKeyringStore(keyringBackend{
+		get: func(service, account string) (string, error) {
+			gotService, gotAccount = service, account
+			return "gemini-secret", nil
+		},
+	}, errors.New("not found"))
+
+	secret, err := store.Get(GeminiAPIKey)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if secret != "gemini-secret" || gotService != "reporepo" || gotAccount != "gemini-api-key" {
+		t.Fatalf("Get() = %q, service = %q, account = %q", secret, gotService, gotAccount)
+	}
+}
+
 func TestKeyringStoreErrorsDoNotContainSecret(t *testing.T) {
 	const secret = "sensitive-test-value"
 	backendErr := errors.New("backend rejected " + secret)

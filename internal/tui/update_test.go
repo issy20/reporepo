@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/issy20/reporepo/internal/clients"
 	"github.com/issy20/reporepo/internal/core"
 )
 
@@ -511,7 +512,9 @@ func TestEmptyEnterWithOutOfRangeSelectionIsNoop(t *testing.T) {
 }
 
 func TestEmptyInputShortcutsToggleAndQuit(t *testing.T) {
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{
+		"claude": &fakeAI{}, "openai": &fakeAI{}, "gemini": &fakeAI{},
+	}}, nil)
 	for _, tt := range []struct {
 		key      rune
 		language string
@@ -520,6 +523,7 @@ func TestEmptyInputShortcutsToggleAndQuit(t *testing.T) {
 		{key: 'l', language: "en", provider: "claude"},
 		{key: 'l', language: "ja", provider: "claude"},
 		{key: 'p', language: "ja", provider: "openai"},
+		{key: 'p', language: "ja", provider: "gemini"},
 		{key: 'p', language: "ja", provider: "claude"},
 	} {
 		m, _ = updated(t, m, runeKey(tt.key))

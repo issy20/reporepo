@@ -1,6 +1,6 @@
 # Reporepo
 
-GitHubリポジトリをClaudeまたはOpenAIで解析し、要約・技術解説・技術的背景を表示するTUIアプリです。
+GitHubリポジトリをClaude、OpenAI、またはGoogle Geminiで解析し、要約・技術解説・技術的背景を表示するTUIアプリです。
 
 ## ビルドと実行
 
@@ -14,7 +14,7 @@ go build -o reporepo .
 
 ## secretの保存
 
-GitHub token、Anthropic API key、OpenAI API keyは `config.json` へ保存せず、OSの資格情報ストアへ保存します。
+GitHub token、Anthropic API key、OpenAI API key、Gemini API keyは `config.json` へ保存せず、OSの資格情報ストアへ保存します（service=`reporepo`、Gemini account=`gemini-api-key`）。
 
 | OS | 保存先 |
 |---|---|
@@ -30,10 +30,11 @@ LinuxではSecret Serviceを提供するkeyringとD-Busセッションが必要�
 export GITHUB_TOKEN=...
 export ANTHROPIC_API_KEY=...
 export OPENAI_API_KEY=...
+export GEMINI_API_KEY=...
 ./reporepo run
 ```
 
-GitHub tokenは任意です。AnthropicまたはOpenAIのAPI keyは少なくとも一方が必要です。
+GitHub tokenは任意です。Anthropic、OpenAI、GeminiのAPI keyはいずれか一つ以上が必要です。
 
 設定ウィザードではsecretの空入力は既存値の維持、`-` は削除を意味します。既存secretの値は画面へ表示しません。
 

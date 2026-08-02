@@ -13,6 +13,7 @@ type Config struct {
 	GithubToken     string `json:"-"`
 	AnthropicAPIKey string `json:"-"`
 	OpenAIAPIKey    string `json:"-"`
+	GeminiAPIKey    string `json:"-"`
 	DefaultProvider string `json:"default_provider"`
 	DefaultLanguage string `json:"default_language"`
 }
@@ -21,6 +22,7 @@ type configFile struct {
 	GithubToken     string `json:"github_token,omitempty"`
 	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 	OpenAIAPIKey    string `json:"openai_api_key,omitempty"`
+	GeminiAPIKey    string `json:"gemini_api_key,omitempty"`
 	DefaultProvider string `json:"default_provider"`
 	DefaultLanguage string `json:"default_language"`
 }
@@ -30,6 +32,7 @@ type LegacySecrets struct {
 	GithubToken     string
 	AnthropicAPIKey string
 	OpenAIAPIKey    string
+	GeminiAPIKey    string
 }
 
 // configFilePath は設定ファイルのパス。テストで上書き可能。
@@ -88,6 +91,7 @@ func LoadConfigFile() (*Config, LegacySecrets, error) {
 		GithubToken:     stored.GithubToken,
 		AnthropicAPIKey: stored.AnthropicAPIKey,
 		OpenAIAPIKey:    stored.OpenAIAPIKey,
+		GeminiAPIKey:    stored.GeminiAPIKey,
 	}
 	return cfg, legacy, nil
 }

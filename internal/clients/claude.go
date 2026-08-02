@@ -26,6 +26,8 @@ func NewClaudeClient(apiKey, model string, httpClient *http.Client) *ClaudeClien
 	return &ClaudeClient{apiKey: apiKey, model: model, endpoint: defaultClaudeEndpoint, http: httpClient}
 }
 
+func (c *ClaudeClient) ProviderModel() (string, string) { return "claude", c.model }
+
 type claudeMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

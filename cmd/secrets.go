@@ -13,28 +13,34 @@ const (
 	githubTokenEnv     = "GITHUB_TOKEN"
 	anthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
 	openAIAPIKeyEnv    = "OPENAI_API_KEY"
+	geminiAPIKeyEnv    = "GEMINI_API_KEY"
 )
 
 func resolveRuntimeSecrets(cfg *core.Config, store secretstore.Store) (*core.Config, []string, error) {
 	runtimeConfig := *cfg
-	warnings := make([]string, 0, 3)
+	warnings := make([]string, 0, 4)
 
 	runtimeConfig.GithubToken = resolveSecret(githubTokenEnv, secretstore.GitHubToken, store, "GitHub token", &warnings)
 	runtimeConfig.AnthropicAPIKey = resolveSecret(anthropicAPIKeyEnv, secretstore.AnthropicAPIKey, store, "Anthropic API key", &warnings)
 	runtimeConfig.OpenAIAPIKey = resolveSecret(openAIAPIKeyEnv, secretstore.OpenAIAPIKey, store, "OpenAI API key", &warnings)
+	runtimeConfig.GeminiAPIKey = resolveSecret(geminiAPIKeyEnv, secretstore.GeminiAPIKey, store, "Gemini API key", &warnings)
 
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
-	if !hasClaude && !hasOpenAI {
-		return nil, warnings, errors.New("ANTHROPIC_API_KEY または OPENAI_API_KEY を設定してください")
+	hasGemini := runtimeConfig.GeminiAPIKey != ""
+	if !hasClaude && !hasOpenAI && !hasGemini {
+		return nil, warnings, errors.New("ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください")
 	}
 	if (runtimeConfig.DefaultProvider == "claude" && !hasClaude) ||
 		(runtimeConfig.DefaultProvider == "openai" && !hasOpenAI) ||
-		(runtimeConfig.DefaultProvider != "claude" && runtimeConfig.DefaultProvider != "openai") {
+		(runtimeConfig.DefaultProvider == "gemini" && !hasGemini) ||
+		(runtimeConfig.DefaultProvider != "claude" && runtimeConfig.DefaultProvider != "openai" && runtimeConfig.DefaultProvider != "gemini") {
 		if hasClaude {
 			runtimeConfig.DefaultProvider = "claude"
-		} else {
+		} else if hasOpenAI {
 			runtimeConfig.DefaultProvider = "openai"
+		} else {
+			runtimeConfig.DefaultProvider = "gemini"
 		}
 	}
 	return &runtimeConfig, warnings, nil
@@ -91,6 +97,7 @@ func migrateLegacySecrets(cfg *core.Config, legacy core.LegacySecrets, store sec
 	clean.GithubToken = ""
 	clean.AnthropicAPIKey = ""
 	clean.OpenAIAPIKey = ""
+	clean.GeminiAPIKey = ""
 	if err := saveConfig(&clean); err != nil {
 		return migrationError(rollbackMigratedSecrets(store, created))
 	}
@@ -137,6 +144,7 @@ func legacySecretEntries(legacy core.LegacySecrets) []legacySecretEntry {
 		{key: secretstore.GitHubToken, value: strings.TrimSpace(legacy.GithubToken)},
 		{key: secretstore.AnthropicAPIKey, value: strings.TrimSpace(legacy.AnthropicAPIKey)},
 		{key: secretstore.OpenAIAPIKey, value: strings.TrimSpace(legacy.OpenAIAPIKey)},
+		{key: secretstore.GeminiAPIKey, value: strings.TrimSpace(legacy.GeminiAPIKey)},
 	}
 	entries := make([]legacySecretEntry, 0, len(candidates))
 	for _, entry := range candidates {

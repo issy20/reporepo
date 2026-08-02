@@ -78,9 +78,13 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 		if cfg.DefaultLanguage == "ja" || cfg.DefaultLanguage == "en" {
 			language = cfg.DefaultLanguage
 		}
-		if cfg.DefaultProvider == "claude" || cfg.DefaultProvider == "openai" {
+		if cfg.DefaultProvider == "claude" || cfg.DefaultProvider == "openai" || cfg.DefaultProvider == "gemini" {
 			provider = cfg.DefaultProvider
 		}
+	}
+	available := availableProviders(deps.AI)
+	if len(available) > 0 && !containsProvider(available, provider) {
+		provider = available[0]
 	}
 	input := textinput.New()
 	input.Placeholder = "owner/repo または GitHub URL"
@@ -102,6 +106,37 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
 	m.reloadEntries()
 	return m
+}
+
+func availableProviders(ai map[string]clients.AIClient) []string {
+	providers := make([]string, 0, 3)
+	for _, provider := range []string{"claude", "openai", "gemini"} {
+		if ai[provider] != nil {
+			providers = append(providers, provider)
+		}
+	}
+	return providers
+}
+
+func containsProvider(providers []string, target string) bool {
+	for _, provider := range providers {
+		if provider == target {
+			return true
+		}
+	}
+	return false
+}
+
+func nextProvider(current string, available []string) string {
+	if len(available) == 0 {
+		return current
+	}
+	for i, provider := range available {
+		if provider == current {
+			return available[(i+1)%len(available)]
+		}
+	}
+	return available[0]
 }
 
 func (m *Model) reloadEntries() {

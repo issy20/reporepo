@@ -14,10 +14,12 @@ func TestResolveRuntimeSecretsEnvironmentTakesPriorityWithoutStoreGet(t *testing
 	t.Setenv("GITHUB_TOKEN", " env-github ")
 	t.Setenv("ANTHROPIC_API_KEY", " env-anthropic ")
 	t.Setenv("OPENAI_API_KEY", " env-openai ")
+	t.Setenv("GEMINI_API_KEY", " env-gemini ")
 	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.GitHubToken:     "stored-github",
 		secretstore.AnthropicAPIKey: "stored-anthropic",
 		secretstore.OpenAIAPIKey:    "stored-openai",
+		secretstore.GeminiAPIKey:    "stored-gemini",
 	})
 	cfg := &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}
 
@@ -25,7 +27,7 @@ func TestResolveRuntimeSecretsEnvironmentTakesPriorityWithoutStoreGet(t *testing
 	if err != nil {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
 	}
-	if got.GithubToken != "env-github" || got.AnthropicAPIKey != "env-anthropic" || got.OpenAIAPIKey != "env-openai" {
+	if got.GithubToken != "env-github" || got.AnthropicAPIKey != "env-anthropic" || got.OpenAIAPIKey != "env-openai" || got.GeminiAPIKey != "env-gemini" {
 		t.Fatal("resolveRuntimeSecrets() did not use environment secrets")
 	}
 	if got := operationKeys(store.Calls, "Get"); len(got) != 0 {
@@ -34,7 +36,7 @@ func TestResolveRuntimeSecretsEnvironmentTakesPriorityWithoutStoreGet(t *testing
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", warnings)
 	}
-	if cfg.GithubToken != "" || cfg.AnthropicAPIKey != "" || cfg.OpenAIAPIKey != "" {
+	if cfg.GithubToken != "" || cfg.AnthropicAPIKey != "" || cfg.OpenAIAPIKey != "" || cfg.GeminiAPIKey != "" {
 		t.Fatal("resolveRuntimeSecrets() mutated loader-owned Config")
 	}
 }
@@ -59,8 +61,8 @@ func TestResolveRuntimeSecretsLoadsStoreAndCorrectsProvider(t *testing.T) {
 	if got.DefaultProvider != "openai" {
 		t.Fatalf("DefaultProvider = %q, want openai", got.DefaultProvider)
 	}
-	if got := operationKeys(store.Calls, "Get"); len(got) != 3 {
-		t.Fatalf("Store.Get() calls = %v, want all three keys", got)
+	if got := operationKeys(store.Calls, "Get"); len(got) != 4 {
+		t.Fatalf("Store.Get() calls = %v, want all four keys", got)
 	}
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", warnings)
@@ -93,8 +95,8 @@ func TestResolveRuntimeSecretsBackendFailuresAreSafeWarnings(t *testing.T) {
 			t.Fatal("warning contains backend error or secret")
 		}
 	}
-	if got := operationKeys(store.Calls, "Get"); len(got) != 2 {
-		t.Fatalf("Store.Get() calls = %v, want GitHub and OpenAI only", got)
+	if got := operationKeys(store.Calls, "Get"); len(got) != 3 {
+		t.Fatalf("Store.Get() calls = %v, want GitHub, OpenAI, and Gemini", got)
 	}
 }
 
@@ -105,7 +107,7 @@ func TestResolveRuntimeSecretsRejectsMissingAISecrets(t *testing.T) {
 	store := testutil.NewMemorySecretStore(nil)
 
 	_, _, err := resolveRuntimeSecrets(&core.Config{}, store)
-	if err == nil || err.Error() != "ANTHROPIC_API_KEY または OPENAI_API_KEY を設定してください" {
+	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
 	}
 }

@@ -22,6 +22,39 @@ func (stubAIClient) Generate(context.Context, *core.RepoMeta, string, string) (*
 	return nil, nil
 }
 
+func TestRunApplicationUsesGeminiAsOnlyAvailableProvider(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	factoryCalls := 0
+	err := runApplicationWith(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{secretstore.GeminiAPIKey: "gemini-key"}),
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		newGemini: func(key, model string) (clients.AIClient, error) {
+			factoryCalls++
+			if key != "gemini-key" || model != defaultGeminiModel {
+				t.Fatalf("Gemini factory args = %q, %q", key, model)
+			}
+			return stubAIClient{}, nil
+		},
+		runTUI: func(deps tui.Dependencies, cfg *core.Config) error {
+			if cfg.DefaultProvider != "gemini" || len(deps.AI) != 1 || deps.AI["gemini"] == nil {
+				t.Fatalf("TUI config = %#v, AI = %#v", cfg, deps.AI)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runApplicationWith() error = %v", err)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("Gemini factory calls = %d, want 1", factoryCalls)
+	}
+}
+
 func TestRunApplicationResolvesSecretsFromStore(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -113,6 +146,7 @@ func TestRunApplicationEnvironmentOnlySucceedsWhenStoreUnavailable(t *testing.T)
 	t.Setenv("GITHUB_TOKEN", "env-github")
 	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
 	t.Setenv("OPENAI_API_KEY", "env-openai")
+	t.Setenv("GEMINI_API_KEY", "env-gemini")
 	backendFailure := errors.New("keychain unavailable")
 	secretStore := testutil.NewMemorySecretStore(nil)
 	secretStore.GetErrors = map[secretstore.Key]error{
@@ -244,7 +278,7 @@ func TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath(t *testing.T)
 			return "", nil
 		},
 	})
-	if err == nil || err.Error() != "ANTHROPIC_API_KEY または OPENAI_API_KEY を設定してください" {
+	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 		t.Fatalf("error = %v", err)
 	}
 	if pathCalls != 0 {

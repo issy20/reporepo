@@ -26,6 +26,8 @@ func NewOpenAIClient(apiKey, model string, httpClient *http.Client) *OpenAIClien
 	return &OpenAIClient{apiKey: apiKey, model: model, endpoint: defaultOpenAIEndpoint, http: httpClient}
 }
 
+func (c *OpenAIClient) ProviderModel() (string, string) { return "openai", c.model }
+
 type openAIMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
