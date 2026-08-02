@@ -10,6 +10,7 @@ import (
 
 	"github.com/issy20/reporepo/internal/core"
 	"github.com/issy20/reporepo/internal/secretstore"
+	"github.com/issy20/reporepo/internal/testutil"
 )
 
 func TestPromptSecretEmptyInputReturnsKeepAction(t *testing.T) {
@@ -44,51 +45,12 @@ func TestPromptSecretEditReturnsSetAndDeleteActions(t *testing.T) {
 	}
 }
 
-type transactionSecretStore struct {
-	values       map[secretstore.Key]string
-	setCalls     []secretstore.Key
-	deleteCalls  []secretstore.Key
-	operations   []string
-	failSetAt    int
-	failDeleteAt int
-}
-
-func (s *transactionSecretStore) Get(key secretstore.Key) (string, error) {
-	value, ok := s.values[key]
-	if !ok {
-		return "", secretstore.ErrNotFound
-	}
-	return value, nil
-}
-
-func (s *transactionSecretStore) Set(key secretstore.Key, value string) error {
-	s.setCalls = append(s.setCalls, key)
-	s.operations = append(s.operations, "set:"+string(key))
-	if s.failSetAt > 0 && len(s.setCalls) == s.failSetAt {
-		return errors.New("set failed")
-	}
-	s.values[key] = value
-	return nil
-}
-
-func (s *transactionSecretStore) Delete(key secretstore.Key) error {
-	s.deleteCalls = append(s.deleteCalls, key)
-	s.operations = append(s.operations, "delete:"+string(key))
-	if s.failDeleteAt > 0 && len(s.deleteCalls) == s.failDeleteAt {
-		return errors.New("delete failed")
-	}
-	delete(s.values, key)
-	return nil
-}
-
 func TestSaveWizardChangesRestoresDeleteAfterLaterFailure(t *testing.T) {
-	store := &transactionSecretStore{
-		values: map[secretstore.Key]string{
-			secretstore.GitHubToken:     "old-github",
-			secretstore.AnthropicAPIKey: "old-anthropic",
-		},
-		failSetAt: 1,
-	}
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.GitHubToken:     "old-github",
+		secretstore.AnthropicAPIKey: "old-anthropic",
+	})
+	store.FailSetAt = 1
 	snapshots := map[secretstore.Key]secretSnapshot{
 		secretstore.GitHubToken:     {value: "old-github", exists: true},
 		secretstore.AnthropicAPIKey: {value: "old-anthropic", exists: true},
@@ -101,15 +63,15 @@ func TestSaveWizardChangesRestoresDeleteAfterLaterFailure(t *testing.T) {
 	if err := saveWizardChanges(store, snapshots, edits, func() error { return nil }); err == nil {
 		t.Fatal("saveWizardChanges() error = nil, want failure")
 	}
-	if store.values[secretstore.GitHubToken] != "old-github" {
+	if store.Snapshot()[secretstore.GitHubToken] != "old-github" {
 		t.Fatal("deleted secret was not restored")
 	}
 }
 
 func TestSaveWizardChangesConfigFailureRollsBackInReverseOrder(t *testing.T) {
-	store := &transactionSecretStore{values: map[secretstore.Key]string{
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.AnthropicAPIKey: "old-anthropic",
-	}}
+	})
 	snapshots := map[secretstore.Key]secretSnapshot{
 		secretstore.GitHubToken:     {},
 		secretstore.AnthropicAPIKey: {value: "old-anthropic", exists: true},
@@ -123,24 +85,23 @@ func TestSaveWizardChangesConfigFailureRollsBackInReverseOrder(t *testing.T) {
 	if err == nil {
 		t.Fatal("saveWizardChanges() error = nil, want config failure")
 	}
-	if _, exists := store.values[secretstore.GitHubToken]; exists || store.values[secretstore.AnthropicAPIKey] != "old-anthropic" {
-		t.Fatalf("store values after rollback = %#v", store.values)
+	state := store.Snapshot()
+	if _, exists := state[secretstore.GitHubToken]; exists || state[secretstore.AnthropicAPIKey] != "old-anthropic" {
+		t.Fatalf("store values after rollback = %#v", state)
 	}
-	want := []string{
-		"set:github-token", "delete:anthropic-api-key",
-		"set:anthropic-api-key", "delete:github-token",
+	want := []testutil.SecretOperation{
+		{Method: "Set", Key: secretstore.GitHubToken}, {Method: "Delete", Key: secretstore.AnthropicAPIKey},
+		{Method: "Set", Key: secretstore.AnthropicAPIKey}, {Method: "Delete", Key: secretstore.GitHubToken},
 	}
-	if !slices.Equal(store.operations, want) {
-		t.Fatalf("operation order = %v, want %v", store.operations, want)
+	if !slices.Equal(store.Calls, want) {
+		t.Fatalf("operation order = %v, want %v", store.Calls, want)
 	}
 }
 
 func TestSaveWizardChangesReportsRollbackFailureWithoutLeakingSecret(t *testing.T) {
 	const sensitive = "sensitive-old-value"
-	store := &transactionSecretStore{
-		values:    map[secretstore.Key]string{secretstore.GitHubToken: sensitive},
-		failSetAt: 2,
-	}
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{secretstore.GitHubToken: sensitive})
+	store.FailSetAt = 2
 	snapshots := map[secretstore.Key]secretSnapshot{
 		secretstore.GitHubToken: {value: sensitive, exists: true},
 	}
@@ -158,13 +119,11 @@ func TestSaveWizardChangesReportsRollbackFailureWithoutLeakingSecret(t *testing.
 }
 
 func TestSaveWizardChangesRollsBackFirstSetWhenSecondSetFails(t *testing.T) {
-	store := &transactionSecretStore{
-		values: map[secretstore.Key]string{
-			secretstore.GitHubToken:     "old-github",
-			secretstore.AnthropicAPIKey: "old-anthropic",
-		},
-		failSetAt: 2,
-	}
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.GitHubToken:     "old-github",
+		secretstore.AnthropicAPIKey: "old-anthropic",
+	})
+	store.FailSetAt = 2
 	snapshots := map[secretstore.Key]secretSnapshot{
 		secretstore.GitHubToken:     {value: "old-github", exists: true},
 		secretstore.AnthropicAPIKey: {value: "old-anthropic", exists: true},
@@ -182,21 +141,23 @@ func TestSaveWizardChangesRollsBackFirstSetWhenSecondSetFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("saveWizardChanges() error = nil, want Set failure")
 	}
-	if store.values[secretstore.GitHubToken] != "old-github" || store.values[secretstore.AnthropicAPIKey] != "old-anthropic" {
-		t.Fatalf("store values after rollback = %#v", store.values)
+	state := store.Snapshot()
+	if state[secretstore.GitHubToken] != "old-github" || state[secretstore.AnthropicAPIKey] != "old-anthropic" {
+		t.Fatalf("store values after rollback = %#v", state)
 	}
 	if saveCalls != 0 {
 		t.Fatalf("config save calls = %d, want 0", saveCalls)
 	}
 	wantOrder := []secretstore.Key{secretstore.GitHubToken, secretstore.AnthropicAPIKey, secretstore.GitHubToken}
-	if !slices.Equal(store.setCalls, wantOrder) {
-		t.Fatalf("Set order = %v, want %v", store.setCalls, wantOrder)
+	setCalls := operationKeys(store.Calls, "Set")
+	if !slices.Equal(setCalls, wantOrder) {
+		t.Fatalf("Set order = %v, want %v", setCalls, wantOrder)
 	}
 }
 
 func TestRunConfigWizard_NoDoesNotSave(t *testing.T) {
 	saves := 0
-	secretStore := &fakeSecretStore{values: map[secretstore.Key]string{secretstore.AnthropicAPIKey: "stored-key"}}
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{secretstore.AnthropicAPIKey: "stored-key"})
 	in := strings.NewReader("\n\n\n\n\nno\n")
 	out := &bytes.Buffer{}
 	err := runConfigWizard(in, out,
@@ -212,7 +173,7 @@ func TestRunConfigWizard_NoDoesNotSave(t *testing.T) {
 	if saves != 0 {
 		t.Fatalf("save calls = %d, want 0", saves)
 	}
-	if len(secretStore.setCalls) != 0 || len(secretStore.deletes) != 0 {
+	if len(operationKeys(secretStore.Calls, "Set")) != 0 || len(operationKeys(secretStore.Calls, "Delete")) != 0 {
 		t.Fatal("cancel changed the Keychain store")
 	}
 }
@@ -220,12 +181,14 @@ func TestRunConfigWizard_NoDoesNotSave(t *testing.T) {
 func TestRunConfigWizardStoreFailureDoesNotPrompt(t *testing.T) {
 	const sensitive = "backend-sensitive-value"
 	out := &bytes.Buffer{}
+	secretStore := testutil.NewMemorySecretStore(nil)
+	secretStore.GetErrors = map[secretstore.Key]error{
+		secretstore.GitHubToken: errors.New("failure: " + sensitive),
+	}
 	err := runConfigWizard(strings.NewReader("should-not-be-read\n"), out,
 		func() (*core.Config, error) { return &core.Config{}, nil },
 		func(*core.Config) error { t.Fatal("save called"); return nil },
-		&fakeSecretStore{getErrs: map[secretstore.Key]error{
-			secretstore.GitHubToken: errors.New("failure: " + sensitive),
-		}},
+		secretStore,
 	)
 	if err == nil {
 		t.Fatal("runConfigWizard() error = nil, want store error")
@@ -239,9 +202,9 @@ func TestRunConfigWizard_UpdatesAndSavesAfterYes(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	original := &core.Config{GithubToken: "old-token", AnthropicAPIKey: "old-key", OpenAIAPIKey: "remove-me", DefaultProvider: "claude", DefaultLanguage: "ja"}
-	secretStore := &fakeSecretStore{values: map[secretstore.Key]string{
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.GitHubToken: "old-token", secretstore.AnthropicAPIKey: "old-key", secretstore.OpenAIAPIKey: "remove-me",
-	}}
+	})
 	var saved *core.Config
 	out := &bytes.Buffer{}
 	err := runConfigWizard(strings.NewReader(" new-token \n new-key \n-\nclaude\nen\nyes\n"), out,
@@ -258,7 +221,9 @@ func TestRunConfigWizard_UpdatesAndSavesAfterYes(t *testing.T) {
 	if saved.GithubToken != "" || saved.AnthropicAPIKey != "" || saved.OpenAIAPIKey != "" || saved.DefaultProvider != "claude" || saved.DefaultLanguage != "en" {
 		t.Fatalf("saved config = %#v", saved)
 	}
-	if secretStore.setCalls[secretstore.GitHubToken] != "new-token" || secretStore.setCalls[secretstore.AnthropicAPIKey] != "new-key" || len(secretStore.deletes) != 1 || secretStore.deletes[0] != secretstore.OpenAIAPIKey {
+	state := secretStore.Snapshot()
+	deleteCalls := operationKeys(secretStore.Calls, "Delete")
+	if state[secretstore.GitHubToken] != "new-token" || state[secretstore.AnthropicAPIKey] != "new-key" || len(deleteCalls) != 1 || deleteCalls[0] != secretstore.OpenAIAPIKey {
 		t.Fatal("secret edits were not applied to the Keychain store")
 	}
 	if original.GithubToken != "old-token" || original.OpenAIAPIKey != "remove-me" {
@@ -281,7 +246,7 @@ func TestRunConfigWizard_EnvironmentKeyIsNotSaved(t *testing.T) {
 			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
 		},
 		func(cfg *core.Config) error { copy := *cfg; saved = &copy; return nil },
-		&fakeSecretStore{},
+		testutil.NewMemorySecretStore(nil),
 	)
 	if err != nil {
 		t.Fatalf("runConfigWizard() error = %v", err)
@@ -307,7 +272,7 @@ func TestRunConfigWizard_InvalidChoicesAreRetried(t *testing.T) {
 			return &core.Config{DefaultProvider: "broken", DefaultLanguage: "broken"}, nil
 		},
 		func(cfg *core.Config) error { saved = cfg; return nil },
-		&fakeSecretStore{},
+		testutil.NewMemorySecretStore(nil),
 	)
 	if err != nil {
 		t.Fatalf("runConfigWizard() error = %v", err)
@@ -325,7 +290,7 @@ func TestRunConfigWizard_EOFDoesNotSave(t *testing.T) {
 	err := runConfigWizard(strings.NewReader(""), io.Discard,
 		func() (*core.Config, error) { return &core.Config{}, nil },
 		func(*core.Config) error { saves++; return nil },
-		&fakeSecretStore{},
+		testutil.NewMemorySecretStore(nil),
 	)
 	if err != nil {
 		t.Fatalf("runConfigWizard() error = %v", err)
@@ -340,7 +305,7 @@ func TestRunConfigWizard_SanitizesLoadAndSaveErrors(t *testing.T) {
 	loadErr := runConfigWizard(strings.NewReader(""), io.Discard,
 		func() (*core.Config, error) { return nil, errors.New(secret) },
 		func(*core.Config) error { return nil },
-		&fakeSecretStore{},
+		testutil.NewMemorySecretStore(nil),
 	)
 	if loadErr == nil || strings.Contains(loadErr.Error(), secret) {
 		t.Fatalf("load error = %v", loadErr)
@@ -352,7 +317,7 @@ func TestRunConfigWizard_SanitizesLoadAndSaveErrors(t *testing.T) {
 			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
 		},
 		func(*core.Config) error { return errors.New(secret) },
-		&fakeSecretStore{},
+		testutil.NewMemorySecretStore(nil),
 	)
 	if saveErr == nil || strings.Contains(saveErr.Error(), secret) {
 		t.Fatalf("save error = %v", saveErr)

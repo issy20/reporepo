@@ -24,7 +24,7 @@ GitHub token、Anthropic API key、OpenAI API keyを平文の `config.json` か�
 - 設定ウィザードの途中失敗時に可能な範囲でロールバックする。
 - 旧形式JSONのsecretを安全かつ冪等に移行する。
 - stdout、stderr、error、ログへsecretを含めない。
-- 単体・統合テストで実OS Keychainを読み書きしない。
+- 単体・統合テストでは `internal/testutil.MemorySecretStore` を注入し、実OS Keychainを読み書きしない。
 
 ## 前提
 

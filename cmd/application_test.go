@@ -12,6 +12,7 @@ import (
 	"github.com/issy20/reporepo/internal/core"
 	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/issy20/reporepo/internal/store"
+	"github.com/issy20/reporepo/internal/testutil"
 	"github.com/issy20/reporepo/internal/tui"
 )
 
@@ -25,10 +26,10 @@ func TestRunApplicationResolvesSecretsFromStore(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
-	secretStore := &fakeSecretStore{values: map[secretstore.Key]string{
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.GitHubToken:     "stored-github",
 		secretstore.AnthropicAPIKey: "stored-anthropic",
-	}}
+	})
 
 	err := runApplicationWith(applicationDependencies{
 		loadConfig:  func() (*core.Config, error) { return &core.Config{DefaultProvider: "claude"}, nil },
@@ -57,7 +58,7 @@ func TestRunApplicationMigratesLegacySecretsBeforeResolvingRuntime(t *testing.T)
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
-	secretStore := &transactionSecretStore{values: map[secretstore.Key]string{}}
+	secretStore := testutil.NewMemorySecretStore(nil)
 	saveCalls := 0
 
 	err := runApplicationWith(applicationDependencies{
@@ -91,7 +92,8 @@ func TestRunApplicationMigratesLegacySecretsBeforeResolvingRuntime(t *testing.T)
 
 func TestRunApplicationReturnsSafeMigrationGuidance(t *testing.T) {
 	const sensitive = "legacy-sensitive-value"
-	secretStore := &transactionSecretStore{values: map[secretstore.Key]string{}, failSetAt: 1}
+	secretStore := testutil.NewMemorySecretStore(nil)
+	secretStore.FailSetAt = 1
 	err := runApplicationWith(applicationDependencies{
 		loadConfigFile: func() (*core.Config, core.LegacySecrets, error) {
 			return &core.Config{}, core.LegacySecrets{AnthropicAPIKey: sensitive}, nil
@@ -112,9 +114,10 @@ func TestRunApplicationEnvironmentOnlySucceedsWhenStoreUnavailable(t *testing.T)
 	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
 	t.Setenv("OPENAI_API_KEY", "env-openai")
 	backendFailure := errors.New("keychain unavailable")
-	secretStore := &fakeSecretStore{getErrs: map[secretstore.Key]error{
+	secretStore := testutil.NewMemorySecretStore(nil)
+	secretStore.GetErrors = map[secretstore.Key]error{
 		secretstore.GitHubToken: backendFailure, secretstore.AnthropicAPIKey: backendFailure, secretstore.OpenAIAPIKey: backendFailure,
-	}}
+	}
 
 	err := runApplicationWith(applicationDependencies{
 		loadConfig:  func() (*core.Config, error) { return &core.Config{DefaultProvider: "claude"}, nil },
@@ -125,8 +128,8 @@ func TestRunApplicationEnvironmentOnlySucceedsWhenStoreUnavailable(t *testing.T)
 	if err != nil {
 		t.Fatalf("runApplicationWith() error = %v", err)
 	}
-	if len(secretStore.getCalls) != 0 {
-		t.Fatalf("Store.Get() calls = %v, want none", secretStore.getCalls)
+	if got := operationKeys(secretStore.Calls, "Get"); len(got) != 0 {
+		t.Fatalf("Store.Get() calls = %v, want none", got)
 	}
 }
 
@@ -136,9 +139,9 @@ func TestRunApplicationUsesOnlyAvailableOpenAIProvider(t *testing.T) {
 
 	err := runApplicationWith(applicationDependencies{
 		loadConfig: func() (*core.Config, error) { return loaded, nil },
-		secretStore: &fakeSecretStore{values: map[secretstore.Key]string{
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
 			secretstore.OpenAIAPIKey: "openai-key",
-		}},
+		}),
 		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
 		newHTTP:  func() *http.Client { return &http.Client{} },
 		newStore: func(path string) *store.Store { return store.NewStore(path) },
@@ -182,11 +185,11 @@ func TestRunApplicationBuildsTUIDependencies(t *testing.T) {
 	called := false
 	err := runApplicationWith(applicationDependencies{
 		loadConfig: func() (*core.Config, error) { return cfg, nil },
-		secretStore: &fakeSecretStore{values: map[secretstore.Key]string{
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
 			secretstore.GitHubToken:     "github",
 			secretstore.AnthropicAPIKey: "anthropic",
 			secretstore.OpenAIAPIKey:    "openai",
-		}},
+		}),
 		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
 		runTUI: func(deps tui.Dependencies, got *core.Config) error {
 			called = true
@@ -217,9 +220,9 @@ func TestRunApplicationReturnsSetupErrors(t *testing.T) {
 		want := errors.New("TUI failed")
 		err := runApplicationWith(applicationDependencies{
 			loadConfig: func() (*core.Config, error) { return &core.Config{}, nil },
-			secretStore: &fakeSecretStore{values: map[secretstore.Key]string{
+			secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
 				secretstore.AnthropicAPIKey: "key",
-			}},
+			}),
 			dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
 			runTUI:   func(tui.Dependencies, *core.Config) error { return want },
 		})
@@ -235,7 +238,7 @@ func TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath(t *testing.T)
 		loadConfig: func() (*core.Config, error) {
 			return &core.Config{}, nil
 		},
-		secretStore: &fakeSecretStore{},
+		secretStore: testutil.NewMemorySecretStore(nil),
 		dataPath: func() (string, error) {
 			pathCalls++
 			return "", nil
@@ -257,11 +260,11 @@ func TestRunApplicationSharesFiniteHTTPClientAndFactoryArguments(t *testing.T) {
 
 	err := runApplicationWith(applicationDependencies{
 		loadConfig: func() (*core.Config, error) { return cfg, nil },
-		secretStore: &fakeSecretStore{values: map[secretstore.Key]string{
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
 			secretstore.GitHubToken:     " github-token ",
 			secretstore.AnthropicAPIKey: " claude-key ",
 			secretstore.OpenAIAPIKey:    " openai-key ",
-		}},
+		}),
 		dataPath: func() (string, error) { return path, nil },
 		newHTTP: func() *http.Client {
 			httpCalls++

@@ -8,12 +8,13 @@ import (
 
 	"github.com/issy20/reporepo/internal/core"
 	"github.com/issy20/reporepo/internal/secretstore"
+	"github.com/issy20/reporepo/internal/testutil"
 )
 
 func TestNonSecretCommandsDoNotAccessSecretStore(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"version"}, {"where"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			secretStore := &fakeSecretStore{}
+			secretStore := testutil.NewMemorySecretStore(nil)
 			root := newRootCommand(commandDependencies{
 				run:         func() error { t.Fatal("run called"); return nil },
 				secretStore: secretStore,
@@ -26,7 +27,7 @@ func TestNonSecretCommandsDoNotAccessSecretStore(t *testing.T) {
 			if err := root.Execute(); err != nil {
 				t.Fatalf("Execute(%v) error = %v", args, err)
 			}
-			if len(secretStore.getCalls) != 0 || len(secretStore.setCalls) != 0 || len(secretStore.deletes) != 0 {
+			if len(secretStore.Calls) != 0 {
 				t.Fatalf("command %v accessed SecretStore", args)
 			}
 		})
@@ -67,9 +68,9 @@ func TestConfigUpdatesValuesWithoutLeakingExistingSecrets(t *testing.T) {
 		DefaultProvider: "claude", DefaultLanguage: "ja",
 	}
 	var saved *core.Config
-	secretStore := &fakeSecretStore{values: map[secretstore.Key]string{
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
 		secretstore.GitHubToken: "old-github-secret", secretstore.AnthropicAPIKey: "old-anthropic-secret", secretstore.OpenAIAPIKey: "old-openai-secret",
-	}}
+	})
 	out := &bytes.Buffer{}
 	root := newRootCommand(commandDependencies{
 		run:         func() error { return nil },
@@ -90,7 +91,7 @@ func TestConfigUpdatesValuesWithoutLeakingExistingSecrets(t *testing.T) {
 	if saved.GithubToken != "" || saved.AnthropicAPIKey != "" || saved.OpenAIAPIKey != "" || saved.DefaultProvider != "openai" || saved.DefaultLanguage != "en" {
 		t.Fatalf("saved config = %#v", saved)
 	}
-	if secretStore.setCalls[secretstore.AnthropicAPIKey] != "new-anthropic" {
+	if secretStore.Snapshot()[secretstore.AnthropicAPIKey] != "new-anthropic" {
 		t.Fatal("updated secret was not saved to Keychain store")
 	}
 	for _, secret := range []string{"old-github-secret", "old-anthropic-secret", "old-openai-secret"} {
