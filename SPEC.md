@@ -1,6 +1,6 @@
 # Reporepo 仕様書 兼 実装計画
 
-最終更新: 2026-08-02
+最終更新: 2026-08-03
 バージョン: 0.1.0 (開発中)
 ステータス: コア・TUI・CLI・OS資格情報ストア移行実装完了 / OS別手動スモークテスト未完了
 
@@ -71,6 +71,43 @@ GitHub tokenとAPI key（以下「secret」）は設定JSONへ保存せず、OS�
 
 設定ウィザードでは既存secretの値を表示せず、「設定済み / 未設定」の状態だけを表示する。空入力は既存値を維持し、`-` は資格情報ストアからの削除を意味する。secret入力はTTY上でechoしない。
 
+### 2.8 CLIプレゼンテーション
+
+Cobraが担当するhelp、version、保存先表示、設定ウィザード、警告、成功・キャンセル・エラー応答に、統一されたCLIプレゼンテーションを適用する。Bubble TeaによるフルスクリーンTUIの描画とは責務を分け、短時間で完了するCobraコマンドの応答だけを対象とする。
+
+対話可能なTTYでは、色、太字、余白、インデント、状態記号を使って情報の階層と結果を示す。色だけで状態を表現せず、成功・警告・失敗には必ず文言または記号を併記する。基本表現は次のとおりとする。
+
+```text
+✓ 設定を保存しました
+
+  Provider    gemini
+  Language    ja
+  GitHub      Keychain
+  Gemini      環境変数
+
+⚠ OpenAI API keyは設定されていません
+  reporepo config で設定できます
+```
+
+表示は共通のsemantic role（title、label、value、success、warning、error、hint、muted）を経由して生成し、各commandがANSI escape sequenceや色コードを直接組み立てない。既存のLip Glossを利用できるが、Cobra側のstyle定義は `internal/tui` へ依存させず、CLI専用presentation packageへ分離する。
+
+出力先に応じて次の規則を適用する。
+
+- 各メッセージの出力先writerがTTYの場合だけ装飾を有効にする。stdoutとstderrは個別に判定する。
+- `NO_COLOR` が存在する、`TERM=dumb` である、または出力先が非TTYの場合は、ANSI escape sequenceを一切含まないplain textへ自動的に切り替える。
+- `--help`、`version`、`where`、正常終了結果はstdoutへ出力する。
+- 警告とエラーはstderrへ出力する。ただしテストや埋め込み利用でCobraのwriterを差し替えた場合は、そのwriterを尊重する。
+- pipeやfile redirect時も情報を欠落させず、機械処理しやすい1行単位のplain textを出力する。
+- `where` のpath、version番号、provider名など、スクリプトが利用し得る値の表記は装飾の有無で変えない。
+- terminal幅が狭い場合は固定幅のboxを強制せず、内容を欠落させない。pathやtoken相当の値を見栄えのために途中省略しない。
+- 非対話入力ではprompt装飾を無効化し、従来どおり行単位で入力できるようにする。
+
+設定ウィザードは「secret」「providerと言語」「確認」の段階を見出しで区切り、最後に保存予定内容を整列して表示する。secretは値ではなく `Keychain設定済み`、`環境変数`、`未設定` の状態だけを表示する。環境変数とKeychainの両方に値がある場合は、環境変数が優先されることをwarningまたはhintとして明示する。入力エラーは直前のpromptの近くへ理由と有効な選択肢を表示し、ウィザード全体を最初からやり直させない。
+
+長時間処理の進捗表示はフルスクリーンTUIへ委ねる。Cobra commandへspinnerを追加する場合はTTY限定とし、完了・失敗・cancel時に必ず停止して表示行を確定する。非TTYではspinnerや繰り返し更新を出力しない。
+
+helpはCobraのcommand treeとflag情報を正とし、独自文字列との二重管理を避ける。root helpには概要、usage、主要command、具体的な実行例、設定方法を読みやすい順で表示する。未知command、余分な引数、無効flagではusage全文を自動表示せず、簡潔なエラーと `reporepo --help` の案内を表示する。
+
 ---
 
 ## 3. 非機能要件
@@ -82,6 +119,8 @@ secretはOSの資格情報ストアへ保存し、設定JSON、データJSON、�
 サーバー・認証は持たない（各ユーザーが自分のキーを使うため不要）。単一バイナリで配布でき、CGO不要でクロスコンパイル可能とする。GitHub token未設定でも動作するが、その場合はGitHub APIの低いレート制限が適用される。READMEはAIへ渡す前に文字数で切り詰め、コストとレイテンシを抑制する。
 
 OS資格情報ストアは平文設定ファイルより安全な保存先だが、同一ユーザー権限で動作する悪意あるプロセスからの完全な隔離を保証するものではない。secretをログへ出さない、不要に長時間保持しない、外部エラーをサニタイズする防御も継続する。
+
+CLIプレゼンテーションは端末能力に依存して機能を失ってはならない。装飾を無効化しても、成功・警告・失敗、次に取るべき操作、設定状態を文章だけで判別できること。自動テストではTTY判定、環境変数、writer、terminal幅を注入し、実terminalへ依存しない。golden testを用いる場合はdecorated出力とplain出力を分離し、ANSI非包含、secret非包含、stdout/stderr分離を個別に検証する。
 
 ---
 
@@ -104,6 +143,10 @@ reporepo/
     root.go                    cobra ルートコマンド（run/config/version/where）
     wizard.go                  設定ウィザード
   internal/
+    presentation/
+      renderer.go             CLI応答のsemantic rendering、TTY/plain切替
+      styles.go               CLI専用のLip Glossスタイル
+      terminal.go             TTY、NO_COLOR、TERM、表示幅の判定
     core/
       types.go                 データ型（Entry / RepoMeta / Analysis）
       config.go                非secret設定の読み書き、パス解決、旧形式検出
@@ -149,6 +192,8 @@ config.json（provider / language）
 ```
 
 OS資格情報ストアへのアクセスはinterface越しに行い、TUI、外部APIクライアント、設定JSON層がkeyringライブラリへ直接依存しない。CLIがcomposition rootとして実行時Configを組み立てる。
+
+CLI presentationは文字列の意味と表示方法だけを担当し、設定保存、secret操作、外部API呼び出しなどのビジネスロジックを持たない。`cmd` は成功、警告、エラー、summary等のsemanticな表示要求をpresentation境界へ渡す。presentationはCobraから渡されたstdout/stderr writerとterminal capabilityを使って描画し、globalな標準出力や実terminalを直接参照しない。
 
 資格情報ストアから「項目なし」が返された場合は未設定として扱う。アクセス拒否、ロック、D-Bus不在、backend異常は未設定と混同せず、安全な利用者向けエラーへ変換する。下位エラーにsecretが含まれる可能性を考慮し、生エラーをそのまま表示しない。
 
@@ -245,11 +290,13 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAIクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
+データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
 
 ### 9.2 未完了 / 要対応
 
 以下はリリース前に確認すること。
+
+**CLIプレゼンテーション。** Cobraのhelp、version、where、config wizard、警告、エラーへ共通presentationを適用する。TTYでは統一した装飾を行い、非TTY、`NO_COLOR`、`TERM=dumb`ではANSIを含まないplain textへ切り替える。stdout/stderr分離、狭いterminal、redirect、secret非漏洩を自動テストする。
 
 **OS資格情報ストアの手動スモーク。** macOS Keychain、Windows Credential Manager、Linux desktopのSecret Serviceで、ダミー値によるSet / Get / Deleteと旧形式移行を確認する。自動テストは実OS資格情報ストアへアクセスしない。
 
