@@ -3,9 +3,73 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/issy20/reporepo/internal/presentation"
 )
+
+func plainPresenter(out io.Writer) *presentation.Renderer {
+	return presentation.NewRenderer(out, presentation.Capabilities{Width: 80})
+}
+
+func decoratedPresenter(out io.Writer) *presentation.Renderer {
+	return presentation.NewRenderer(out, presentation.Capabilities{Decorated: true, Width: 80})
+}
+
+func TestRootPresentationContract(t *testing.T) {
+	root := newRootCommand(commandDependencies{presenter: plainPresenter})
+	if !root.SilenceUsage || !root.SilenceErrors {
+		t.Fatalf("silence flags = %v, %v", root.SilenceUsage, root.SilenceErrors)
+	}
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"GitHub リポジトリ", "Usage", "run", "config", "version", "where", "reporepo config"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("help missing %q: %q", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("plain help has ANSI: %q", out.String())
+	}
+}
+
+func TestDecoratedVersionAndWhereUseCurrentCommandWriter(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"where"}} {
+		out := &bytes.Buffer{}
+		root := newRootCommand(commandDependencies{presenter: decoratedPresenter, configPath: func() (string, error) { return "/full/config/path", nil }, dataPath: func() (string, error) { return "/full/data/path", nil }})
+		root.SetOut(out)
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "\x1b[") {
+			t.Fatalf("%v output not decorated: %q", args, out.String())
+		}
+	}
+}
+
+func TestExecuteRootRendersCommandErrorOnceWithoutUsage(t *testing.T) {
+	errOut := &bytes.Buffer{}
+	root := newRootCommand(commandDependencies{presenter: plainPresenter, run: func() error { return errors.New("起動できませんでした") }})
+	root.SetErr(errOut)
+	root.SetArgs([]string{"run"})
+	err := executeRoot(root, plainPresenter)
+	if err == nil {
+		t.Fatal("error = nil")
+	}
+	if strings.Count(errOut.String(), "起動できませんでした") != 1 {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "Usage:") || !strings.Contains(errOut.String(), "ERROR:") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
 
 func TestNewRootCommandPublishesCommands(t *testing.T) {
 	root := NewRootCommand()

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/presentation"
 	"github.com/issy20/reporepo/internal/secretstore"
 	"golang.org/x/term"
 )
@@ -83,6 +84,8 @@ func (c *consoleWizardIO) Println(message string) error {
 
 type wizardDependencies struct {
 	io        wizardIO
+	out       *presentation.Renderer
+	errOut    *presentation.Renderer
 	load      func() (*core.Config, error)
 	save      func(*core.Config) error
 	secrets   secretstore.Store
@@ -90,8 +93,14 @@ type wizardDependencies struct {
 }
 
 func runConfigWizard(in io.Reader, out io.Writer, load func() (*core.Config, error), save func(*core.Config) error, secrets secretstore.Store) error {
+	return runConfigWizardStreams(in, out, out, func(w io.Writer) *presentation.Renderer {
+		return presentation.NewRenderer(w, presentation.ResolveCapabilities(w))
+	}, load, save, secrets)
+}
+
+func runConfigWizardStreams(in io.Reader, out, errOut io.Writer, factory presenterFactory, load func() (*core.Config, error), save func(*core.Config) error, secrets secretstore.Store) error {
 	return runConfigWizardWith(wizardDependencies{
-		io: newConsoleWizardIO(in, out), load: load, save: save, secrets: secrets, lookupEnv: os.LookupEnv,
+		io: newConsoleWizardIO(in, out), out: factory(out), errOut: factory(errOut), load: load, save: save, secrets: secrets, lookupEnv: os.LookupEnv,
 	})
 }
 
@@ -101,6 +110,12 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	}
 	if deps.lookupEnv == nil {
 		deps.lookupEnv = func(string) (string, bool) { return "", false }
+	}
+	if deps.out == nil {
+		deps.out = presentation.NewRenderer(io.Discard, presentation.Capabilities{})
+	}
+	if deps.errOut == nil {
+		deps.errOut = presentation.NewRenderer(io.Discard, presentation.Capabilities{})
 	}
 	cfg, err := deps.load()
 	if isMigrationFailure(err) {
@@ -117,6 +132,15 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	stored, err := loadWizardSecrets(deps.secrets)
 	if err != nil {
 		return errors.New("OS資格情報ストアから設定を読み込めませんでした")
+	}
+	if err := deps.out.Title("Reporepo configuration"); err != nil {
+		return inputResult(err)
+	}
+	if err := deps.out.Section("Secrets"); err != nil {
+		return inputResult(err)
+	}
+	if err := deps.out.Summary(secretRows(stored, deps.lookupEnv)); err != nil {
+		return inputResult(err)
 	}
 
 	githubEdit, err := promptSecretEdit(deps.io, "GitHub token", stored[secretstore.GitHubToken].exists)
@@ -141,22 +165,22 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	openAIEnv := envPresent(deps.lookupEnv, openAIAPIKeyEnv)
 	geminiEnv := envPresent(deps.lookupEnv, geminiAPIKeyEnv)
 	if githubEnv {
-		if err := deps.io.Println("GITHUB_TOKEN が設定されているため、実行時は環境変数が優先されます。"); err != nil {
+		if err := deps.errOut.Warning("GITHUB_TOKEN が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
 		}
 	}
 	if claudeEnv {
-		if err := deps.io.Println("ANTHROPIC_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
+		if err := deps.errOut.Warning("ANTHROPIC_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
 		}
 	}
 	if openAIEnv {
-		if err := deps.io.Println("OPENAI_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
+		if err := deps.errOut.Warning("OPENAI_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
 		}
 	}
 	if geminiEnv {
-		if err := deps.io.Println("GEMINI_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
+		if err := deps.errOut.Warning("GEMINI_API_KEY が設定されているため、実行時は環境変数が優先されます。"); err != nil {
 			return inputResult(err)
 		}
 	}
@@ -166,7 +190,7 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		if !validChoice(fallback, "claude", "openai", "gemini") {
 			fallback = "claude"
 		}
-		updated.DefaultProvider, err = promptChoice(deps.io, "既定provider", fallback, "claude", "openai", "gemini")
+		updated.DefaultProvider, err = promptChoice(deps.io, deps.errOut.Warning, "既定provider", fallback, "claude", "openai", "gemini")
 		if err != nil {
 			return inputResult(err)
 		}
@@ -179,7 +203,7 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		if available {
 			break
 		}
-		if err := deps.io.Println("選択したproviderのAPI keyがありません。secretを設定するか、利用可能なproviderを選択してください。"); err != nil {
+		if err := deps.errOut.Warning("選択したproviderのAPI keyがありません。secretを設定するか、利用可能なproviderを選択してください。"); err != nil {
 			return inputResult(err)
 		}
 		if !claudeConfigured && !claudeEnv && !openAIConfigured && !openAIEnv && !geminiConfigured && !geminiEnv {
@@ -199,7 +223,7 @@ func runConfigWizardWith(deps wizardDependencies) error {
 	if !validChoice(language, "ja", "en") {
 		language = "ja"
 	}
-	updated.DefaultLanguage, err = promptChoice(deps.io, "既定言語", language, "ja", "en")
+	updated.DefaultLanguage, err = promptChoice(deps.io, deps.errOut.Warning, "既定言語", language, "ja", "en")
 	if err != nil {
 		return inputResult(err)
 	}
@@ -210,7 +234,16 @@ func runConfigWizardWith(deps wizardDependencies) error {
 		secretstore.OpenAIAPIKey:    configuredAfterEdit(stored[secretstore.OpenAIAPIKey].exists, openAIEdit),
 		secretstore.GeminiAPIKey:    configuredAfterEdit(stored[secretstore.GeminiAPIKey].exists, geminiEdit),
 	}
-	if err := printSummary(deps.io, &updated, configured, githubEnv, claudeEnv, openAIEnv, geminiEnv); err != nil {
+	if err := deps.out.Section("Defaults"); err != nil {
+		return inputResult(err)
+	}
+	if err := deps.out.Summary([]presentation.Row{{Label: "Provider", Value: updated.DefaultProvider}, {Label: "Language", Value: updated.DefaultLanguage}}); err != nil {
+		return inputResult(err)
+	}
+	if err := deps.out.Section("Review"); err != nil {
+		return inputResult(err)
+	}
+	if err := printSummary(deps.out, &updated, configured, githubEnv, claudeEnv, openAIEnv, geminiEnv); err != nil {
 		return inputResult(err)
 	}
 	for {
@@ -226,17 +259,17 @@ func runConfigWizardWith(deps wizardDependencies) error {
 			if err := saveWizardChanges(deps.secrets, stored, edits, func() error { return deps.save(&updated) }); err != nil {
 				return err
 			}
-			if err := deps.io.Println("設定を保存しました。"); err != nil {
+			if err := deps.out.Success("設定を保存しました。"); err != nil {
 				return inputResult(err)
 			}
 			return nil
 		case "", "n", "no":
-			if err := deps.io.Println("設定の保存をキャンセルしました。"); err != nil {
+			if err := deps.out.Hint("設定の保存をキャンセルしました。"); err != nil {
 				return inputResult(err)
 			}
 			return nil
 		default:
-			if err := deps.io.Println("y または n を入力してください。"); err != nil {
+			if err := deps.errOut.Warning("y または n を入力してください。"); err != nil {
 				return inputResult(err)
 			}
 		}
@@ -340,7 +373,7 @@ func wizardSaveError(rollbackFailed bool) error {
 	return errors.New("設定を保存できませんでした")
 }
 
-func promptChoice(wio wizardIO, label, current string, choices ...string) (string, error) {
+func promptChoice(wio wizardIO, report func(string) error, label, current string, choices ...string) (string, error) {
 	for {
 		value, err := wio.ReadLine(fmt.Sprintf("%s [%s] (%s): ", label, current, strings.Join(choices, "/")))
 		if err != nil {
@@ -353,7 +386,7 @@ func promptChoice(wio wizardIO, label, current string, choices ...string) (strin
 		if validChoice(value, choices...) {
 			return value, nil
 		}
-		if err := wio.Println(strings.Join(choices, ", ") + " のいずれかを入力してください。"); err != nil {
+		if err := report(strings.Join(choices, ", ") + " のいずれかを入力してください。"); err != nil {
 			return "", err
 		}
 	}
@@ -373,21 +406,23 @@ func envPresent(lookup func(string) (string, bool), name string) bool {
 	return ok && strings.TrimSpace(value) != ""
 }
 
-func printSummary(wio wizardIO, cfg *core.Config, configured map[secretstore.Key]bool, githubEnv, claudeEnv, openAIEnv, geminiEnv bool) error {
-	lines := []string{
-		"GitHub token: " + secretStatus(configured[secretstore.GitHubToken], githubEnv),
-		"Anthropic API key: " + secretStatus(configured[secretstore.AnthropicAPIKey], claudeEnv),
-		"OpenAI API key: " + secretStatus(configured[secretstore.OpenAIAPIKey], openAIEnv),
-		"Gemini API key: " + secretStatus(configured[secretstore.GeminiAPIKey], geminiEnv),
-		"既定provider: " + cfg.DefaultProvider,
-		"既定言語: " + cfg.DefaultLanguage,
+func printSummary(out *presentation.Renderer, cfg *core.Config, configured map[secretstore.Key]bool, githubEnv, claudeEnv, openAIEnv, geminiEnv bool) error {
+	return out.Summary([]presentation.Row{
+		{Label: "GitHub token", Value: secretStatus(configured[secretstore.GitHubToken], githubEnv)},
+		{Label: "Anthropic API key", Value: secretStatus(configured[secretstore.AnthropicAPIKey], claudeEnv)},
+		{Label: "OpenAI API key", Value: secretStatus(configured[secretstore.OpenAIAPIKey], openAIEnv)},
+		{Label: "Gemini API key", Value: secretStatus(configured[secretstore.GeminiAPIKey], geminiEnv)},
+		{Label: "既定provider", Value: cfg.DefaultProvider}, {Label: "既定言語", Value: cfg.DefaultLanguage},
+	})
+}
+
+func secretRows(stored map[secretstore.Key]secretSnapshot, lookup func(string) (string, bool)) []presentation.Row {
+	return []presentation.Row{
+		{Label: "GitHub token", Value: secretStatus(stored[secretstore.GitHubToken].exists, envPresent(lookup, githubTokenEnv))},
+		{Label: "Anthropic API key", Value: secretStatus(stored[secretstore.AnthropicAPIKey].exists, envPresent(lookup, anthropicAPIKeyEnv))},
+		{Label: "OpenAI API key", Value: secretStatus(stored[secretstore.OpenAIAPIKey].exists, envPresent(lookup, openAIAPIKeyEnv))},
+		{Label: "Gemini API key", Value: secretStatus(stored[secretstore.GeminiAPIKey].exists, envPresent(lookup, geminiAPIKeyEnv))},
 	}
-	for _, line := range lines {
-		if err := wio.Println(line); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func secretStatus(stored, environment bool) string {

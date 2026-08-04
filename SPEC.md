@@ -2,7 +2,7 @@
 
 最終更新: 2026-08-03
 バージョン: 0.1.0 (開発中)
-ステータス: コア・TUI・CLI・OS資格情報ストア移行実装完了 / OS別手動スモークテスト未完了
+ステータス: コア・TUI・CLI・CLIプレゼンテーション・OS資格情報ストア移行実装完了 / OS別手動スモークテスト未完了
 
 ---
 
@@ -290,13 +290,11 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー。
+データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー、CLIプレゼンテーション（TTY/plain切替、help、version、where、wizard、エラー所有権、stdout/stderr分離）。
 
 ### 9.2 未完了 / 要対応
 
 以下はリリース前に確認すること。
-
-**CLIプレゼンテーション。** Cobraのhelp、version、where、config wizard、警告、エラーへ共通presentationを適用する。TTYでは統一した装飾を行い、非TTY、`NO_COLOR`、`TERM=dumb`ではANSIを含まないplain textへ切り替える。stdout/stderr分離、狭いterminal、redirect、secret非漏洩を自動テストする。
 
 **OS資格情報ストアの手動スモーク。** macOS Keychain、Windows Credential Manager、Linux desktopのSecret Serviceで、ダミー値によるSet / Get / Deleteと旧形式移行を確認する。自動テストは実OS資格情報ストアへアクセスしない。
 

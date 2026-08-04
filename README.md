@@ -12,6 +12,18 @@ go build -o reporepo .
 
 設定・データファイルの場所は `./reporepo where` で確認できます。
 
+CLI の help、version、保存先、設定ウィザード、警告、エラーは共通の表示規則を使います。TTY では色と状態記号で装飾し、pipe・redirect、`NO_COLOR`、`TERM=dumb` では ANSI escape sequence を含まない plain text を出力します。
+
+```bash
+./reporepo --help
+./reporepo version
+./reporepo where
+NO_COLOR=1 ./reporepo --help
+TERM=dumb ./reporepo config
+```
+
+plain mode の `version` は `reporepo 0.1.0` の1行、`where` は `config:` と `data:` の2行を維持するため、pipe からも利用できます。警告とエラーは stderr、それ以外の通常結果と prompt は stdout へ出力します。
+
 ## secretの保存
 
 GitHub token、Anthropic API key、OpenAI API key、Gemini API keyは `config.json` へ保存せず、OSの資格情報ストアへ保存します（service=`reporepo`、Gemini account=`gemini-api-key`）。

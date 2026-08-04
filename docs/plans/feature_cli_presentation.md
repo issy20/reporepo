@@ -1,6 +1,6 @@
 # Plan: Cobra CLIプレゼンテーション
 
-Status: ready
+Status: implemented
 
 ## 目的
 

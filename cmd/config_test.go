@@ -100,3 +100,30 @@ func TestConfigUpdatesValuesWithoutLeakingExistingSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigWizardUsesSemanticSectionsAndStderrForValidation(t *testing.T) {
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{secretstore.AnthropicAPIKey: "secret"})
+	root := newRootCommand(commandDependencies{
+		presenter: plainPresenter,
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}, nil
+		},
+		saveConfig: func(*core.Config) error { return nil }, secretStore: store,
+	})
+	root.SetIn(strings.NewReader("\n\n\n\ninvalid\nclaude\n\nno\n"))
+	root.SetOut(out)
+	root.SetErr(errOut)
+	root.SetArgs([]string{"config"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Reporepo configuration", "Secrets", "Defaults", "Review", "設定の保存をキャンセルしました"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("stdout missing %q: %q", want, out.String())
+		}
+	}
+	if !strings.Contains(errOut.String(), "WARNING:") || !strings.Contains(errOut.String(), "claude, openai, gemini") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
