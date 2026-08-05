@@ -45,26 +45,33 @@ type consoleWizardIO struct {
 	reader       *bufio.Reader
 	in           io.Reader
 	out          io.Writer
+	writePrompt  func(string) error
 	isTerminal   func(int) bool
 	readPassword func(int) ([]byte, error)
 }
 
-func newConsoleWizardIO(in io.Reader, out io.Writer) wizardIO {
+func newConsoleWizardIO(in io.Reader, out io.Writer, writePrompt func(string) error) *consoleWizardIO {
+	if writePrompt == nil {
+		writePrompt = func(s string) error {
+			_, err := fmt.Fprint(out, s)
+			return err
+		}
+	}
 	return &consoleWizardIO{
 		reader: bufio.NewReader(in), in: in, out: out,
-		isTerminal: term.IsTerminal, readPassword: term.ReadPassword,
+		writePrompt: writePrompt, isTerminal: term.IsTerminal, readPassword: term.ReadPassword,
 	}
 }
 
 func (c *consoleWizardIO) ReadLine(prompt string) (string, error) {
-	if _, err := fmt.Fprint(c.out, prompt); err != nil {
+	if err := c.writePrompt(prompt); err != nil {
 		return "", err
 	}
 	return readLine(c.reader)
 }
 
 func (c *consoleWizardIO) ReadSecret(prompt string) (string, error) {
-	if _, err := fmt.Fprint(c.out, prompt); err != nil {
+	if err := c.writePrompt(prompt); err != nil {
 		return "", err
 	}
 	if file, ok := c.in.(*os.File); ok && c.isTerminal(int(file.Fd())) {
@@ -99,8 +106,9 @@ func runConfigWizard(in io.Reader, out io.Writer, load func() (*core.Config, err
 }
 
 func runConfigWizardStreams(in io.Reader, out, errOut io.Writer, factory presenterFactory, load func() (*core.Config, error), save func(*core.Config) error, secrets secretstore.Store) error {
+	renderer := factory(out)
 	return runConfigWizardWith(wizardDependencies{
-		io: newConsoleWizardIO(in, out), out: factory(out), errOut: factory(errOut), load: load, save: save, secrets: secrets, lookupEnv: os.LookupEnv,
+		io: newConsoleWizardIO(in, out, renderer.Prompt), out: renderer, errOut: factory(errOut), load: load, save: save, secrets: secrets, lookupEnv: os.LookupEnv,
 	})
 }
 

@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/presentation"
 	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/issy20/reporepo/internal/testutil"
 )
 
 func TestPromptSecretEmptyInputReturnsKeepAction(t *testing.T) {
-	edit, err := promptSecretEdit(newConsoleWizardIO(strings.NewReader("\n"), io.Discard), "API key", true)
+	edit, err := promptSecretEdit(newConsoleWizardIO(strings.NewReader("\n"), io.Discard, nil), "API key", true)
 	if err != nil {
 		t.Fatalf("promptSecret() error = %v", err)
 	}
@@ -34,7 +36,7 @@ func TestPromptSecretEditReturnsSetAndDeleteActions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := promptSecretEdit(newConsoleWizardIO(strings.NewReader(tt.input), io.Discard), "API key", true)
+			got, err := promptSecretEdit(newConsoleWizardIO(strings.NewReader(tt.input), io.Discard, nil), "API key", true)
 			if err != nil {
 				t.Fatalf("promptSecretEdit() error = %v", err)
 			}
@@ -42,6 +44,106 @@ func TestPromptSecretEditReturnsSetAndDeleteActions(t *testing.T) {
 				t.Fatalf("promptSecretEdit() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestConsoleWizardIOReadLinePromptDecorated(t *testing.T) {
+	var out bytes.Buffer
+	renderer := presentation.NewRenderer(&out, presentation.Capabilities{Decorated: true, Width: 80})
+	wio := newConsoleWizardIO(strings.NewReader("answer\n"), &out, renderer.Prompt)
+	if _, err := wio.ReadLine("API key: "); err != nil {
+		t.Fatalf("ReadLine() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("decorated prompt has no ANSI: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "API key: ") {
+		t.Fatalf("decorated prompt lost label: %q", out.String())
+	}
+}
+
+func TestConsoleWizardIOReadSecretPromptDecorated(t *testing.T) {
+	var out bytes.Buffer
+	renderer := presentation.NewRenderer(&out, presentation.Capabilities{Decorated: true, Width: 80})
+	wio := newConsoleWizardIO(strings.NewReader("secret\n"), &out, renderer.Prompt)
+	if _, err := wio.ReadSecret("API key: "); err != nil {
+		t.Fatalf("ReadSecret() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("decorated secret prompt has no ANSI: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "API key: ") {
+		t.Fatalf("decorated secret prompt lost label: %q", out.String())
+	}
+}
+
+func TestConsoleWizardIOPlainPromptHasNoANSI(t *testing.T) {
+	var out bytes.Buffer
+	renderer := presentation.NewRenderer(&out, presentation.Capabilities{Width: 80})
+	wio := newConsoleWizardIO(strings.NewReader("answer\n"), &out, renderer.Prompt)
+	if _, err := wio.ReadLine("API key: "); err != nil {
+		t.Fatalf("ReadLine() error = %v", err)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("plain prompt contains ANSI: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "API key: ") {
+		t.Fatalf("plain prompt lost label: %q", out.String())
+	}
+}
+
+func TestConsoleWizardIOReadLinePromptErrorIsReturned(t *testing.T) {
+	wio := newConsoleWizardIO(strings.NewReader("answer\n"), io.Discard, func(string) error { return errors.New("prompt failed") })
+	if _, err := wio.ReadLine("API key: "); err == nil || !strings.Contains(err.Error(), "prompt failed") {
+		t.Fatalf("ReadLine() error = %v, want prompt failure", err)
+	}
+}
+
+func TestConsoleWizardIOReadSecretPromptErrorIsReturned(t *testing.T) {
+	wio := newConsoleWizardIO(strings.NewReader("secret\n"), io.Discard, func(string) error { return errors.New("prompt failed") })
+	if _, err := wio.ReadSecret("API key: "); err == nil || !strings.Contains(err.Error(), "prompt failed") {
+		t.Fatalf("ReadSecret() error = %v, want prompt failure", err)
+	}
+}
+
+func TestConsoleWizardIOReadSecretNonTTYReadsLine(t *testing.T) {
+	var out bytes.Buffer
+	renderer := presentation.NewRenderer(&out, presentation.Capabilities{Width: 80})
+	wio := newConsoleWizardIO(strings.NewReader(" plain-secret \n"), &out, renderer.Prompt)
+	value, err := wio.ReadSecret("API key: ")
+	if err != nil {
+		t.Fatalf("ReadSecret() error = %v", err)
+	}
+	if value != "plain-secret" {
+		t.Fatalf("ReadSecret() = %q, want %q", value, "plain-secret")
+	}
+}
+
+func TestConsoleWizardIOReadSecretEchoSuppressedOnTTY(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+	var out bytes.Buffer
+	renderer := presentation.NewRenderer(&out, presentation.Capabilities{Width: 80})
+	wio := newConsoleWizardIO(r, &out, renderer.Prompt)
+	wio.isTerminal = func(int) bool { return true }
+	var passwordRead bool
+	wio.readPassword = func(int) ([]byte, error) { passwordRead = true; return []byte("p@ss\n"), nil }
+	value, err := wio.ReadSecret("API key: ")
+	if err != nil {
+		t.Fatalf("ReadSecret() error = %v", err)
+	}
+	if !passwordRead {
+		t.Fatal("ReadSecret() did not use ReadPassword on TTY")
+	}
+	if value != "p@ss" {
+		t.Fatalf("ReadSecret() = %q, want %q", value, "p@ss")
+	}
+	if !strings.Contains(out.String(), "API key: ") {
+		t.Fatalf("TTY prompt lost label: %q", out.String())
 	}
 }
 

@@ -13,9 +13,6 @@ import (
 
 const maxREADMECharacters = 12_000
 
-// ErrNotImplemented は Path A の契約を green 実装へ引き渡すための一時エラー。
-var ErrNotImplemented = errors.New("AI client is not implemented")
-
 // AIClient は TUI から AI プロバイダの差異を隠す境界。
 type AIClient interface {
 	Generate(ctx context.Context, meta *core.RepoMeta, readme, language string) (*core.Analysis, error)
