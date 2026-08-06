@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -179,6 +180,32 @@ func TestClientFetchRepository_InvalidInput(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected error for invalid owner=%q, repo=%q, but got nil", tt.owner, tt.repo)
 		}
+	}
+}
+
+func TestClientFetchRepository_TruncatesOversizedREADME(t *testing.T) {
+	oversized := strings.Repeat("A", maxREADMEBytes+1000)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","description":"desc","stargazers_count":1,"forks_count":1,"language":"Go"}`))
+		case "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte(oversized))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if len(got.README) != maxREADMEBytes {
+		t.Errorf("README length = %d, want %d", len(got.README), maxREADMEBytes)
 	}
 }
 

@@ -97,7 +97,7 @@ func (c *ClaudeClient) Generate(ctx context.Context, meta *core.RepoMeta, readme
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errResp claudeErrorResponse
-		respBytes, errRead := io.ReadAll(resp.Body)
+		respBytes, errRead := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		if errRead == nil {
 			_ = json.Unmarshal(respBytes, &errResp)
 		}

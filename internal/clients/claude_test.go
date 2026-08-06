@@ -37,6 +37,21 @@ func TestClaudeGenerate_SendsMessagesRequestAndMapsResponse(t *testing.T) {
 	}
 }
 
+func TestClaudeGenerate_TruncatesOversizedErrorBody(t *testing.T) {
+	body := `{"error":{"message":"` + strings.Repeat("A", maxErrorBodyBytes) + `SENTINEL_TAIL"}}`
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	client := NewClaudeClient("secret", "model", httpClient)
+	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "en")
+	if err == nil {
+		t.Fatal("expected API error")
+	}
+	if strings.Contains(err.Error(), "SENTINEL_TAIL") {
+		t.Fatalf("error body tail leaked past limit: %v", err)
+	}
+}
+
 func TestClaudeGenerate_ReportsNon2xxWithoutLeakingSecret(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"invalid key: top-secret"}}`)), Header: make(http.Header)}, nil

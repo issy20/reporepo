@@ -19,6 +19,8 @@ var (
 	ErrRateLimited = errors.New("github rate limit exceeded")
 )
 
+const maxREADMEBytes = 4 << 20 // 4 MiB
+
 var (
 	// github.com/owner/repo
 	urlRegex = regexp.MustCompile(`^(?:https?://)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$`)
@@ -204,7 +206,7 @@ func (c *Client) FetchRepository(ctx context.Context, owner, repo string) (*Repo
 		return nil, handleResponseError(readmeResp)
 	}
 
-	readmeBytes, err := io.ReadAll(readmeResp.Body)
+	readmeBytes, err := io.ReadAll(io.LimitReader(readmeResp.Body, maxREADMEBytes))
 	if err != nil {
 		return nil, err
 	}
