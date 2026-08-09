@@ -39,6 +39,7 @@ make build
 ```bash
 reporepo config   # 対話的にAPI keyを設定
 reporepo run      # TUIを起動
+reporepo analyze owner/repo   # TUIなしで解析し結果を出力
 ```
 
 `config` コマンドをスキップして環境変数だけで動かすこともできます。詳細は「設定」を参照してください。
@@ -48,6 +49,7 @@ reporepo run      # TUIを起動
 | コマンド | 説明 |
 |---|---|
 | `reporepo run` | TUIを起動 |
+| `reporepo analyze owner/repo` | リポジトリを解析して結果を出力（非対話） |
 | `reporepo config` | 設定を対話的に編集（設定ウィザード） |
 | `reporepo version` | バージョンを表示 |
 | `reporepo where` | 設定・データファイルの保存先を表示 |
@@ -84,6 +86,28 @@ reporepo run      # TUIを起動
 | `f` | お気に入りに追加 / 解除 |
 | `r` | 選択中の言語で強制再生成 |
 | `Esc` | 一覧へ戻る |
+
+## 非対話解析（analyze コマンド）
+
+TUIを起動せずにリポジトリを解析し、結果を stdout へ出力します。スクリプト・CI・パイプから利用できます。
+
+```bash
+reporepo analyze owner/repo
+reporepo analyze --json owner/repo
+reporepo analyze --provider gemini --language en owner/repo
+reporepo analyze --force owner/repo
+```
+
+| フラグ | 既定 | 説明 |
+|---|---|---|
+| `--provider, -p` | `config.json` の `default_provider` | AI プロバイダ（claude / openai / gemini） |
+| `--language, -l` | `config.json` の `default_language` | 出力言語（ja / en） |
+| `--json` | false | 結果を単一の JSON オブジェクトとして出力 |
+| `--force, -f` | false | キャッシュを無視して再生成 |
+
+設定・secret・クライアント構築は `run` と同じ経路を使い、ストア（`data.json`）も共有します。解析結果は保存され、TUI の履歴にも現れます。キャッシュヒット時は AI を呼ばず保存済みを出力します（`--force` で再生成）。
+
+出力は常に ANSI を含まない plain text で、`--json` 時は JSON オブジェクト1件です。警告・エラーは stderr、結果は stdout へ出力し、終了コードは成功 0 / 失敗 1 です。
 
 ## 設定
 
@@ -192,8 +216,10 @@ go vet ./...
 ```
 reporepo/
   main.go                      # エントリポイント
-  cmd/                         # Cobra CLI（run / config / version / where）
+  cmd/                         # Cobra CLI（run / analyze / config / version / where）
     root.go                    #   ルートコマンド定義
+    analyze.go                 #   analyze コマンド（非対話解析）
+    analyze_output.go          #   analyze の plain / JSON 出力整形
     wizard.go                  #   設定ウィザード
   internal/
     presentation/              # CLIのsemantic rendering（TTY / plain切替）

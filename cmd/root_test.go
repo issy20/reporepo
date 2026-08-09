@@ -29,7 +29,7 @@ func TestRootPresentationContract(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"GitHub リポジトリ", "Usage", "run", "config", "version", "where", "reporepo config"} {
+	for _, want := range []string{"GitHub リポジトリ", "Usage", "run", "config", "version", "where", "analyze", "reporepo config"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("help missing %q: %q", want, out.String())
 		}
@@ -74,7 +74,7 @@ func TestExecuteRootRendersCommandErrorOnceWithoutUsage(t *testing.T) {
 func TestNewRootCommandPublishesCommands(t *testing.T) {
 	root := NewRootCommand()
 
-	want := map[string]bool{"run": false, "config": false, "version": false, "where": false}
+	want := map[string]bool{"run": false, "config": false, "version": false, "where": false, "analyze": false}
 	for _, command := range root.Commands() {
 		if _, ok := want[command.Name()]; ok {
 			want[command.Name()] = true

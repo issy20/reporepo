@@ -72,7 +72,15 @@ func defaultApplicationDependencies() applicationDependencies {
 	}
 }
 
-func runApplicationWith(deps applicationDependencies) error {
+// runtime は run と analyze が共有する実行時オブジェクト群。
+type runtime struct {
+	cfg    *core.Config
+	github clients.GitHubClient
+	ai     map[string]clients.AIClient
+	store  *store.Store
+}
+
+func buildRuntime(deps applicationDependencies) (*runtime, error) {
 	defaults := defaultApplicationDependencies()
 	if deps.dataPath == nil {
 		deps.dataPath = defaults.dataPath
@@ -99,7 +107,7 @@ func runApplicationWith(deps applicationDependencies) error {
 		deps.newGemini = defaults.newGemini
 	}
 	if deps.loadConfig == nil && deps.loadConfigFile == nil {
-		return errors.New("設定の読み込み処理を利用できません")
+		return nil, errors.New("設定の読み込み処理を利用できません")
 	}
 	var cfg *core.Config
 	var err error
@@ -109,17 +117,17 @@ func runApplicationWith(deps applicationDependencies) error {
 		if err == nil {
 			err = migrateLegacySecrets(cfg, legacy, deps.secretStore, deps.saveConfig)
 			if isMigrationFailure(err) {
-				return err
+				return nil, err
 			}
 		}
 	} else {
 		cfg, err = deps.loadConfig()
 	}
 	if err != nil {
-		return errors.New("設定を読み込めませんでした")
+		return nil, errors.New("設定を読み込めませんでした")
 	}
 	if cfg == nil {
-		return errors.New("設定を読み込めませんでした")
+		return nil, errors.New("設定を読み込めませんでした")
 	}
 
 	runtimeConfig, warnings, err := resolveRuntimeSecrets(cfg, deps.secretStore)
@@ -127,7 +135,7 @@ func runApplicationWith(deps applicationDependencies) error {
 		deps.warn(warning)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
@@ -135,10 +143,7 @@ func runApplicationWith(deps applicationDependencies) error {
 
 	path, err := deps.dataPath()
 	if err != nil {
-		return errors.New("データ保存先を解決できませんでした")
-	}
-	if deps.runTUI == nil {
-		return errors.New("TUIを起動できませんでした")
+		return nil, errors.New("データ保存先を解決できませんでした")
 	}
 
 	httpClient := deps.newHTTP()
@@ -152,17 +157,33 @@ func runApplicationWith(deps applicationDependencies) error {
 	if hasGemini {
 		geminiClient, err := deps.newGemini(runtimeConfig.GeminiAPIKey, defaultGeminiModel)
 		if err != nil {
-			return errors.New("Gemini clientを初期化できませんでした")
+			return nil, errors.New("Gemini clientを初期化できませんでした")
 		}
 		ai["gemini"] = geminiClient
 	}
+	return &runtime{
+		cfg:    runtimeConfig,
+		github: deps.newGitHub(httpClient, githubAPIURL, runtimeConfig.GithubToken),
+		ai:     ai,
+		store:  deps.newStore(path),
+	}, nil
+}
+
+func runApplicationWith(deps applicationDependencies) error {
+	rt, err := buildRuntime(deps)
+	if err != nil {
+		return err
+	}
+	if deps.runTUI == nil {
+		return errors.New("TUIを起動できませんでした")
+	}
 	tuiDeps := tui.Dependencies{
-		Store:  deps.newStore(path),
-		GitHub: deps.newGitHub(httpClient, githubAPIURL, runtimeConfig.GithubToken),
-		AI:     ai,
+		Store:  rt.store,
+		GitHub: rt.github,
+		AI:     rt.ai,
 		Now:    time.Now,
 	}
-	if err := deps.runTUI(tuiDeps, runtimeConfig); err != nil {
+	if err := deps.runTUI(tuiDeps, rt.cfg); err != nil {
 		return errors.New("TUIを起動できませんでした")
 	}
 	return nil

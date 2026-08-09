@@ -1,6 +1,6 @@
 # Plan: analyze コマンド（非対話・自動化）
 
-Status: draft
+Status: implemented
 
 ## 目的
 
@@ -140,48 +140,48 @@ type analysisOutput struct {
 
 ### A. ランタイム共有化（回帰）
 
-- [ ] `buildRuntime` が run と同じ設定・secret・client を構築する
-- [ ] `runApplicationWith` の既存テストがすべて通る（回帰）
-- [ ] 設定読み込み失敗・secret 未設定のエラー変換が維持される
+- [x] `buildRuntime` が run と同じ設定・secret・client を構築する
+- [x] `runApplicationWith` の既存テストがすべて通る（回帰）
+- [x] 設定読み込み失敗・secret 未設定のエラー変換が維持される
 
 ### B. コマンド配線
 
-- [ ] `reporepo analyze`（引数なし）がエラーを返す
-- [ ] `reporepo analyze owner/repo` が解析して結果を出力する
-- [ ] `--help` に analyze が表示される
-- [ ] 無効な引数（2つ以上）がエラーを返す
+- [x] `reporepo analyze`（引数なし）がエラーを返す
+- [x] `reporepo analyze owner/repo` が解析して結果を出力する
+- [x] `--help` に analyze が表示される
+- [x] 無効な引数（2つ以上）がエラーを返す
 
 ### C. フラグ
 
-- [ ] `--provider` / `-p` が既定 provider より優先される
-- [ ] `--language` / `-l` が既定言語より優先される
-- [ ] 未設定 provider を指定すると設定案内エラーを返す
-- [ ] `--force` / `-f` で再生成する
-- [ ] `--json` で JSON 出力になる
+- [x] `--provider` / `-p` が既定 provider より優先される
+- [x] `--language` / `-l` が既定言語より優先される
+- [x] 未設定 provider を指定すると設定案内エラーを返す
+- [x] `--force` / `-f` で再生成する
+- [x] `--json` で JSON 出力になる
 
 ### D. 出力フォーマット
 
-- [ ] plain 出力にメタヘッダと 4 セクションを含む
-- [ ] plain 出力が ANSI を含まない（装飾済みでも）
-- [ ] `--json` が有効な JSON（`encoding/json` でパースできる）
-- [ ] JSON に `full_name` / `repo` / `analysis` / `language` / `provider` / `model` / `created_at` を含む
-- [ ] 出力に secret を含まない
-- [ ] stale な解析で plain・JSON 双方に再生成案内を反映する
+- [x] plain 出力にメタヘッダと 4 セクションを含む
+- [x] plain 出力が ANSI を含まない（装飾済みでも）
+- [x] `--json` が有効な JSON（`encoding/json` でパースできる）
+- [x] JSON に `full_name` / `repo` / `analysis` / `language` / `provider` / `model` / `created_at` を含む
+- [x] 出力に secret を含まない
+- [x] stale な解析で plain・JSON 双方に再生成案内を反映する
 
 ### E. パイプライン連携
 
-- [ ] キャッシュヒットで AI を呼ばず保存済みを出力する
-- [ ] `--force` で再生成して保存する
-- [ ] 鮮度リフレッシュ（メタ再取得）が適用される
-- [ ] 解析結果が `data.json` に保存される（TUI の履歴に現れる）
-- [ ] Warnings が stderr へ出力される
+- [x] キャッシュヒットで AI を呼ばず保存済みを出力する
+- [x] `--force` で再生成して保存する
+- [x] 鮮度リフレッシュ（メタ再取得）が適用される
+- [x] 解析結果が `data.json` に保存される（TUI の履歴に現れる）
+- [x] Warnings が stderr へ出力される
 
 ### F. エラー処理
 
-- [ ] 不正な repo 形式でエラー（secret 非包含）
-- [ ] 解析失敗でエラー（secret 非包含）
-- [ ] stdout / stderr が分離される
-- [ ] 成功時に終了コード 0、失敗時に 1 を返す（`main` の `run` で検証）
+- [x] 不正な repo 形式でエラー（secret 非包含）
+- [x] 解析失敗でエラー（secret 非包含）
+- [x] stdout / stderr が分離される
+- [x] 成功時に終了コード 0、失敗時に 1 を返す（`main` の `run` で検証）
 
 ## 実装順序
 

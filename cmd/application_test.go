@@ -22,6 +22,25 @@ func (stubAIClient) Generate(context.Context, *core.RepoMeta, string, string, st
 	return nil, nil
 }
 
+type stubGitHubClient struct {
+	meta *core.RepoMeta
+	err  error
+}
+
+func (s stubGitHubClient) FetchRepository(_ context.Context, _, _ string) (*clients.RepositoryData, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &clients.RepositoryData{Meta: s.meta, README: "", Code: nil}, nil
+}
+
+func (s stubGitHubClient) FetchRepositoryMeta(_ context.Context, _, _ string) (*core.RepoMeta, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.meta, nil
+}
+
 func TestRunApplicationUsesGeminiAsOnlyAvailableProvider(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -339,6 +358,101 @@ func TestRunApplicationSharesFiniteHTTPClientAndFactoryArguments(t *testing.T) {
 	if shared.Timeout <= 0 {
 		t.Fatalf("HTTP timeout = %v", shared.Timeout)
 	}
+}
+
+func TestBuildRuntimeBuildsSameClientsAsRun(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.GitHubToken:     "github",
+		secretstore.AnthropicAPIKey: "anthropic",
+		secretstore.OpenAIAPIKey:    "openai",
+	})
+	path := filepath.Join(t.TempDir(), "data.json")
+	httpCalls := 0
+	shared := &http.Client{Timeout: applicationHTTPTimeout}
+
+	rt, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "openai", DefaultLanguage: "en"}, nil
+		},
+		secretStore: secretStore,
+		dataPath:    func() (string, error) { return path, nil },
+		newHTTP: func() *http.Client {
+			httpCalls++
+			return shared
+		},
+		newStore: func(got string) *store.Store {
+			if got != path {
+				t.Fatalf("store path = %q", got)
+			}
+			return store.NewStore(got)
+		},
+		newGitHub: func(_ *http.Client, baseURL, token string) clients.GitHubClient {
+			if baseURL != githubAPIURL || token != "github" {
+				t.Fatalf("GitHub args = %q, %q", baseURL, token)
+			}
+			return stubGitHubClient{}
+		},
+		newClaude: func(key, model string, got *http.Client) clients.AIClient {
+			if key != "anthropic" || model != defaultClaudeModel || got != shared {
+				t.Fatalf("Claude args = %q, %q, %p", key, model, got)
+			}
+			return stubAIClient{}
+		},
+		newOpenAI: func(key, model string, got *http.Client) clients.AIClient {
+			if key != "openai" || model != defaultOpenAIModel || got != shared {
+				t.Fatalf("OpenAI args = %q, %q, %p", key, model, got)
+			}
+			return stubAIClient{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+	if rt == nil || rt.cfg == nil || rt.github == nil || rt.ai == nil || rt.store == nil {
+		t.Fatalf("buildRuntime() = %#v", rt)
+	}
+	if rt.cfg.DefaultProvider != "openai" || rt.cfg.DefaultLanguage != "en" {
+		t.Fatalf("runtime config = %#v", rt.cfg)
+	}
+	if len(rt.ai) != 2 || rt.ai["claude"] == nil || rt.ai["openai"] == nil || rt.ai["gemini"] != nil {
+		t.Fatalf("runtime AI map = %#v", rt.ai)
+	}
+	if httpCalls != 1 {
+		t.Fatalf("HTTP factory calls = %d, want 1", httpCalls)
+	}
+}
+
+func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
+	t.Run("config load", func(t *testing.T) {
+		_, err := buildRuntime(applicationDependencies{loadConfig: func() (*core.Config, error) { return nil, errors.New("secret") }})
+		if err == nil || err.Error() != "設定を読み込めませんでした" || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("secret resolution", func(t *testing.T) {
+		_, err := buildRuntime(applicationDependencies{
+			loadConfig:  func() (*core.Config, error) { return &core.Config{}, nil },
+			secretStore: testutil.NewMemorySecretStore(nil),
+		})
+		if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("data path", func(t *testing.T) {
+		_, err := buildRuntime(applicationDependencies{
+			loadConfig: func() (*core.Config, error) { return &core.Config{}, nil },
+			secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+				secretstore.AnthropicAPIKey: "key",
+			}),
+			dataPath: func() (string, error) { return "", errors.New("secret") },
+		})
+		if err == nil || err.Error() != "データ保存先を解決できませんでした" || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("error = %v", err)
+		}
+	})
 }
 
 func TestResolveDataPath(t *testing.T) {

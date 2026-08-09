@@ -43,6 +43,7 @@ type commandDependencies struct {
 	configPath  func() (string, error)
 	dataPath    func() (string, error)
 	presenter   presenterFactory
+	app         *applicationDependencies
 }
 
 // NewRootCommand は reporepo の CLI コマンドツリーを構築する。
@@ -70,6 +71,10 @@ func NewRootCommand() *cobra.Command {
 func newRootCommand(deps commandDependencies) *cobra.Command {
 	if deps.run == nil {
 		deps.run = func() error { return nil }
+	}
+	if deps.app == nil {
+		app := defaultApplicationDependencies()
+		deps.app = &app
 	}
 	if deps.presenter == nil {
 		deps.presenter = func(out io.Writer) *presentation.Renderer {
@@ -126,7 +131,7 @@ func newRootCommand(deps commandDependencies) *cobra.Command {
 		}
 		return p.Summary([]presentation.Row{{Label: "config", Value: configPath}, {Label: "data", Value: dataPath}})
 	}}
-	root.AddCommand(runCommand, configCommand, versionCommand, whereCommand)
+	root.AddCommand(runCommand, configCommand, versionCommand, whereCommand, newAnalyzeCommand(deps))
 	installHelp(root, deps.presenter)
 	return root
 }
