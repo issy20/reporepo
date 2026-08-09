@@ -25,7 +25,7 @@ func TestClaudeGenerate_SendsMessagesRequestAndMapsResponse(t *testing.T) {
 	})}
 
 	client := NewClaudeClient("secret", "claude-test", httpClient)
-	got, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "README", "ja")
+	got, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "README", "", "ja")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestClaudeGenerate_TruncatesOversizedErrorBody(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	client := NewClaudeClient("secret", "model", httpClient)
-	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "en")
+	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "", "en")
 	if err == nil {
 		t.Fatal("expected API error")
 	}
@@ -57,7 +57,7 @@ func TestClaudeGenerate_ReportsNon2xxWithoutLeakingSecret(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"invalid key: top-secret"}}`)), Header: make(http.Header)}, nil
 	})}
 	client := NewClaudeClient("top-secret", "model", httpClient)
-	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "en")
+	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "", "en")
 	if err == nil {
 		t.Fatal("expected API error")
 	}

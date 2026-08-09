@@ -18,7 +18,7 @@ import (
 
 type stubAIClient struct{}
 
-func (stubAIClient) Generate(context.Context, *core.RepoMeta, string, string) (*core.Analysis, error) {
+func (stubAIClient) Generate(context.Context, *core.RepoMeta, string, string, string) (*core.Analysis, error) {
 	return nil, nil
 }
 

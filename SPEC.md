@@ -2,7 +2,7 @@
 
 最終更新: 2026-08-09
 バージョン: 0.1.0 (開発中)
-ステータス: コア・TUI・CLI・CLIプレゼンテーション・OS資格情報ストア移行実装完了 / コード解析・キャッシュ鮮度・analyzeコマンドは仕様確定・未実装 / OS別手動スモークテスト未完了
+ステータス: コア・TUI・CLI・CLIプレゼンテーション・OS資格情報ストア移行・コード解析（共有解析パイプライン・コード文脈取得・PromptVersion）実装完了 / キャッシュ鮮度・analyzeコマンドは仕様確定・未実装 / OS別手動スモークテスト未完了
 
 ---
 
@@ -390,7 +390,7 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー、CLIプレゼンテーション（TTY/plain切替、help、version、where、wizard、エラー所有権、stdout/stderr分離）。
+データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー、CLIプレゼンテーション（TTY/plain切替、help、version、where、wizard、エラー所有権、stdout/stderr分離）、コード解析2.9（共有解析パイプライン `internal/analyzer` の抽出、ファイルツリー・選定・内容取得によるコード文脈のAI入力追加、`PromptVersion` による入力バージョン管理）。
 
 ### 9.2 未完了 / 要対応
 
@@ -404,7 +404,7 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.3 仕様確定・未実装
 
-2.9 コード解析、2.10 キャッシュの鮮度管理、2.11 analyzeコマンド。実装はTDD（テストリスト → 失敗するテスト → 実装 → リファクタ）で進め、最初に共有解析パイプライン `internal/analyzer` を抽出し、その上に各機能を積み上げる。
+2.10 キャッシュの鮮度管理、2.11 analyzeコマンド。実装はTDD（テストリスト → 失敗するテスト → 実装 → リファクタ）で進め、既に抽出済みの共有解析パイプライン `internal/analyzer` の上に各機能を積み上げる。
 
 ---
 

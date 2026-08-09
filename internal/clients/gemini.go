@@ -33,8 +33,8 @@ func NewGeminiClient(apiKey, model string) (*GeminiClient, error) {
 
 func (c *GeminiClient) ProviderModel() (string, string) { return "gemini", c.model }
 
-func (c *GeminiClient) Generate(ctx context.Context, meta *core.RepoMeta, readme, language string) (*core.Analysis, error) {
-	system, user, err := buildPrompts(meta, readme, language)
+func (c *GeminiClient) Generate(ctx context.Context, meta *core.RepoMeta, readme, code, language string) (*core.Analysis, error) {
+	system, user, err := buildPrompts(meta, readme, code, language)
 	if err != nil {
 		return nil, err
 	}

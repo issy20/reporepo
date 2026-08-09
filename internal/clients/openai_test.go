@@ -25,7 +25,7 @@ func TestOpenAIGenerate_SendsChatCompletionJSONModeAndMapsResponse(t *testing.T)
 	})}
 
 	client := NewOpenAIClient("secret", "gpt-test", httpClient)
-	got, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "README", "en")
+	got, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "README", "", "en")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestOpenAIGenerate_ReportsEmptyChoicesAndNon2xx(t *testing.T) {
 				return &http.Response{StatusCode: tt.status, Body: io.NopCloser(strings.NewReader(tt.body)), Header: make(http.Header)}, nil
 			})}
 			client := NewOpenAIClient("secret", "model", httpClient)
-			if _, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "ja"); err == nil {
+			if _, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "", "ja"); err == nil {
 				t.Fatal("expected error")
 			}
 		})
@@ -65,7 +65,7 @@ func TestOpenAIGenerate_TruncatesOversizedErrorBody(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	client := NewOpenAIClient("secret", "model", httpClient)
-	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "ja")
+	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "", "ja")
 	if err == nil {
 		t.Fatal("expected API error")
 	}
@@ -81,7 +81,7 @@ func TestOpenAIGenerate_Non2xxDoesNotLeakAPIKey(t *testing.T) {
 	})}
 	client := NewOpenAIClient("top-secret", "model", httpClient)
 
-	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "ja")
+	_, err := client.Generate(context.Background(), &core.RepoMeta{FullName: "o/r"}, "", "", "ja")
 	if err == nil {
 		t.Fatal("expected API error")
 	}

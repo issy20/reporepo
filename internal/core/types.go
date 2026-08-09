@@ -14,14 +14,15 @@ type Entry struct {
 
 // Analysis は言語別のAI生成結果。
 type Analysis struct {
-	Summary    string    `json:"summary"`
-	TechStack  string    `json:"tech_stack"`
-	Background string    `json:"background"`
-	Keywords   []string  `json:"keywords"`
-	Language   string    `json:"language"`
-	Provider   string    `json:"provider"`
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
+	Summary       string    `json:"summary"`
+	TechStack     string    `json:"tech_stack"`
+	Background    string    `json:"background"`
+	Keywords      []string  `json:"keywords"`
+	Language      string    `json:"language"`
+	Provider      string    `json:"provider"`
+	Model         string    `json:"model"`
+	PromptVersion int       `json:"prompt_version"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // RepoMeta はGitHubから取得したリポジトリのメタ情報。

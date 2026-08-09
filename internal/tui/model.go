@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/issy20/reporepo/internal/analyzer"
 	"github.com/issy20/reporepo/internal/clients"
 	"github.com/issy20/reporepo/internal/core"
 )
@@ -65,6 +66,7 @@ type Model struct {
 	ai        map[string]clients.AIClient
 	now       func() time.Time
 	renderer  markdownRenderer
+	analyzer  *analyzer.Analyzer
 	cancel    context.CancelFunc
 	requestID uint64
 
@@ -104,6 +106,7 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	layout := newLayout(80, 24)
 	input.Width = layout.inputWidth
 	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
+	m.analyzer = analyzer.New(deps.Store, deps.GitHub, deps.AI, now)
 	m.reloadEntries()
 	return m
 }

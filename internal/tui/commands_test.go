@@ -70,7 +70,7 @@ type fakeAI struct {
 	events   *[]string
 }
 
-func (f *fakeAI) Generate(_ context.Context, meta *core.RepoMeta, readme, language string) (*core.Analysis, error) {
+func (f *fakeAI) Generate(_ context.Context, meta *core.RepoMeta, readme, code, language string) (*core.Analysis, error) {
 	f.calls++
 	f.meta, f.readme, f.language = meta, readme, language
 	if f.events != nil {
@@ -100,7 +100,7 @@ func TestAnalyzeRejectsInvalidInputWithoutSideEffects(t *testing.T) {
 
 func TestAnalyzeCacheLookupIgnoresFullNameCaseAndNilAnalysesMisses(t *testing.T) {
 	t.Run("case insensitive cache hit", func(t *testing.T) {
-		s := &recordingStore{entries: []*core.Entry{{FullName: "Owner/Repo", Analyses: map[string]*core.Analysis{"ja": {}}}}}
+		s := &recordingStore{entries: []*core.Entry{{FullName: "Owner/Repo", Analyses: map[string]*core.Analysis{"ja": {PromptVersion: 1, Provider: "claude"}}}}}
 		_, err := commandModel(s, &fakeGitHub{}, &fakeAI{}).analyze(context.Background(), "owner/repo", false)
 		if err != nil || s.upsertCalls != 1 {
 			t.Fatalf("err=%v upsert=%d", err, s.upsertCalls)
@@ -128,7 +128,7 @@ func TestAnalyzeCancellationBeforeWorkSkipsDependencies(t *testing.T) {
 }
 
 func TestAnalyzeUsesCacheAndUpdatesViewedAt(t *testing.T) {
-	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "cached"}}}
+	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude"}}}
 	s, gh, ai := &recordingStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
 	got, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", false)
 	if err != nil || got == entry || gh.calls != 0 || ai.calls != 0 || s.upsertCalls != 1 || !got.ViewedAt.Equal(time.Unix(99, 0)) || !entry.ViewedAt.IsZero() {
@@ -141,7 +141,7 @@ func TestAnalyzeCacheUpsertFailureDoesNotMutateLoadedEntry(t *testing.T) {
 	entry := &core.Entry{
 		FullName: "owner/repo",
 		ViewedAt: originalViewedAt,
-		Analyses: map[string]*core.Analysis{"ja": {Summary: "cached"}},
+		Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude"}},
 	}
 	s := &recordingStore{entries: []*core.Entry{entry}, upsertErr: errors.New("save failed")}
 

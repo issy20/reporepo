@@ -183,6 +183,163 @@ func TestClientFetchRepository_InvalidInput(t *testing.T) {
 	}
 }
 
+func TestClientFetchRepository_WithCodeContext(t *testing.T) {
+	var contentPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","description":"desc","stargazers_count":1,"forks_count":1,"language":"Go","default_branch":"main"}`))
+		case r.URL.Path == "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case r.URL.Path == "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte("# README"))
+		case r.URL.Path == "/repos/owner/repo/git/trees/main":
+			if r.URL.RawQuery != "recursive=1" {
+				t.Errorf("tree query = %q, want recursive=1", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"tree":[{"path":"go.mod","mode":"100644","type":"blob","size":100},{"path":"main.go","mode":"100644","type":"blob","size":10},{"path":"README.md","mode":"100644","type":"blob","size":50}]}`))
+		case strings.HasPrefix(r.URL.Path, "/repos/owner/repo/contents/"):
+			path := strings.TrimPrefix(r.URL.Path, "/repos/owner/repo/contents/")
+			if got := r.Header.Get("Accept"); got != "application/vnd.github.raw" {
+				t.Errorf("contents Accept = %q", got)
+			}
+			contentPaths = append(contentPaths, path)
+			_, _ = w.Write([]byte("content of " + path))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if got.Code == nil || len(got.Code.Files) != 3 {
+		t.Fatalf("Code = %#v, want 3 files", got.Code)
+	}
+	wantPaths := []string{"go.mod", "main.go", "README.md"}
+	for i, want := range wantPaths {
+		if got.Code.Files[i].Path != want || got.Code.Files[i].Content != "content of "+want {
+			t.Fatalf("file[%d] = %#v, want path=%q", i, got.Code.Files[i], want)
+		}
+	}
+	if !reflect.DeepEqual(contentPaths, wantPaths) {
+		t.Fatalf("contents requested in order %v, want %v", contentPaths, wantPaths)
+	}
+}
+
+func TestClientFetchRepository_TreeFailureFallsBackToNilCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","description":"desc","stargazers_count":1,"forks_count":1,"language":"Go","default_branch":"main"}`))
+		case "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte("# README"))
+		case "/repos/owner/repo/git/trees/main":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if got.Code != nil {
+		t.Fatalf("Code = %#v, want nil fallback", got.Code)
+	}
+}
+
+func TestClientFetchRepository_EmptyDefaultBranchSkipsCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","description":"desc","stargazers_count":1,"forks_count":1,"language":"Go"}`))
+		case "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte("# README"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if got.Code != nil {
+		t.Fatalf("Code = %#v, want nil when default branch is unknown", got.Code)
+	}
+}
+
+func TestClientFetchRepository_EmptySelectionReturnsNilCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","default_branch":"main"}`))
+		case "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte("# README"))
+		case "/repos/owner/repo/git/trees/main":
+			_, _ = w.Write([]byte(`{"tree":[{"path":"node_modules/x.js","type":"blob","size":10},{"path":"package-lock.json","type":"blob","size":10}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if got.Code != nil {
+		t.Fatalf("Code = %#v, want nil when nothing is selected", got.Code)
+	}
+}
+
+func TestClientFetchRepository_SkipsFailedFileFetch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","default_branch":"main"}`))
+		case r.URL.Path == "/repos/owner/repo/languages":
+			_, _ = w.Write([]byte(`{"Go":100}`))
+		case r.URL.Path == "/repos/owner/repo/readme":
+			_, _ = w.Write([]byte("# README"))
+		case r.URL.Path == "/repos/owner/repo/git/trees/main":
+			_, _ = w.Write([]byte(`{"tree":[{"path":"a.go","type":"blob","size":10},{"path":"b.go","type":"blob","size":10}]}`))
+		case r.URL.Path == "/repos/owner/repo/contents/a.go":
+			_, _ = w.Write([]byte("aaa"))
+		case strings.HasPrefix(r.URL.Path, "/repos/owner/repo/contents/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	got, err := client.FetchRepository(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepository: %v", err)
+	}
+	if got.Code == nil || len(got.Code.Files) != 1 || got.Code.Files[0].Path != "a.go" {
+		t.Fatalf("Code = %#v, want only a.go", got.Code)
+	}
+}
+
 func TestClientFetchRepository_TruncatesOversizedREADME(t *testing.T) {
 	oversized := strings.Repeat("A", maxREADMEBytes+1000)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

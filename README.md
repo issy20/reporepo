@@ -2,14 +2,15 @@
 
 GitHubリポジトリをAI（Claude / OpenAI / Google Gemini）で解析し、要約・技術解説・技術的背景を表示するTUIアプリです。
 
-`owner/repo`（またはGitHub URL）を入力すると、GitHubからメタ情報・README・言語構成を取得し、選択中のAIプロバイダが構造化された解説（要約・技術スタック・技術的背景・キーワード）を生成します。生成結果はローカルに保存され、履歴・お気に入りから再閲覧できます。
+`owner/repo`（またはGitHub URL）を入力すると、GitHubからメタ情報・README・言語構成・依存マニフェストと主要ソースを取得し、選択中のAIプロバイダが構造化された解説（要約・技術スタック・技術的背景・キーワード）を生成します。生成結果はローカルに保存され、履歴・お気に入りから再閲覧できます。
 
 ## 機能
 
 - **3つのAIプロバイダ**: Claude（Anthropic Messages API）、OpenAI（Chat Completions API）、Gemini（Gemini Developer API）
+- **コード文脈を活用した解析**: READMEだけでなく依存マニフェスト（`go.mod` / `package.json` 等）と主要ソース（最大6ファイル・8000文字）をAI入力に追加し、技術スタックの解析精度を向上
 - **多言語**: 日本語・英語を `l` キーで即時切替。結果は言語ごとに別々にキャッシュ
 - **履歴とお気に入り**: 同じリポジトリは1エントリに集約。`tab` で履歴 ⇄ お気に入りを切替
-- **キャッシュ優先**: 生成済みの結果はAIを再呼び出しせず即表示。`r` キーで強制再生成
+- **キャッシュ優先**: 生成済みの結果はAIを再呼び出しせず即表示。`r` キーで強制再生成。AI入力定義が変わった古い解析は1回だけ自動再生成
 - **セキュアなsecret管理**: API keyは設定JSONへ保存せず、OSの資格情報ストアへ保存
 
 ## 要件
@@ -139,6 +140,8 @@ GitHub tokenは任意です（未設定でも動作しますが、GitHub APIの�
 
 設定ファイルの保存先は `reporepo where` で確認できます。
 
+各解析結果にはAI入力のバージョン（`prompt_version`）が記録されます。この値が現在の入力定義と異なる古い解析はキャッシュ一致とみなされず、次に開いたときに1回だけ再生成されます。
+
 ### 旧形式からの移行
 
 旧形式の `config.json` に平文secretが存在する場合、起動時または設定ウィザード開始時にOS資格情報ストアへ自動移行し、全項目の移行成功後にJSONからsecretを除去します。
@@ -191,6 +194,7 @@ reporepo/
     wizard.go                  #   設定ウィザード
   internal/
     presentation/              # CLIのsemantic rendering（TTY / plain切替）
+    analyzer/                  # 共有解析パイプライン（キャッシュ確認 → GitHub取得 → AI生成 → 保存）
     core/                      # データ型（Entry / RepoMeta / Analysis）と設定管理
     secretstore/               # OS資格情報ストア境界（keyring実装）
     store/                     # 解析履歴のJSON永続化

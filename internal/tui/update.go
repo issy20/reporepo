@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/issy20/reporepo/internal/analyzer"
 	"github.com/issy20/reporepo/internal/core"
 )
 
@@ -62,7 +63,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.reloadEntries()
 		if m.current != nil {
-			m.current = findEntry(m.entries, m.current.FullName)
+			m.current = analyzer.FindEntry(m.entries, m.current.FullName)
 			if m.state == stateDetail {
 				m.setDetailContent()
 			}
@@ -212,7 +213,7 @@ func (m Model) toggleFavorite() (tea.Model, tea.Cmd) {
 	if entry == nil || m.store == nil {
 		return m, nil
 	}
-	updated := cloneEntry(entry)
+	updated := analyzer.CloneEntry(entry)
 	updated.IsFavorite = !updated.IsFavorite
 	m.mutationRequestID++
 	m.mutationPending = true

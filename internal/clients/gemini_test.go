@@ -32,7 +32,7 @@ func TestGeminiClientGenerateSendsPromptsAndParsesJSON(t *testing.T) {
 		}},
 	}}
 	c := &GeminiClient{apiKey: "secret", model: "gemini-test", generator: fake}
-	got, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "readme", "ja")
+	got, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "readme", "", "ja")
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -47,10 +47,10 @@ func TestGeminiClientGenerateSendsPromptsAndParsesJSON(t *testing.T) {
 func TestGeminiClientRejectsInvalidInputBeforeGenerator(t *testing.T) {
 	fake := &fakeGeminiGenerator{}
 	c := &GeminiClient{generator: fake}
-	if _, err := c.Generate(context.Background(), nil, "", "ja"); err == nil || fake.calls != 0 {
+	if _, err := c.Generate(context.Background(), nil, "", "", "ja"); err == nil || fake.calls != 0 {
 		t.Fatalf("Generate(nil) error = %v, calls = %d", err, fake.calls)
 	}
-	if _, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "", "fr"); err == nil || fake.calls != 0 {
+	if _, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "", "", "fr"); err == nil || fake.calls != 0 {
 		t.Fatalf("Generate(fr) error = %v, calls = %d", err, fake.calls)
 	}
 }
@@ -69,7 +69,7 @@ func TestGeminiClientReturnsSafeResponseAndGeneratorErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &GeminiClient{apiKey: secret, model: "model", generator: &fakeGeminiGenerator{response: tt.response, err: tt.err}}
-			_, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "", "en")
+			_, err := c.Generate(context.Background(), &core.RepoMeta{FullName: "owner/repo"}, "", "", "en")
 			if err == nil || strings.Contains(err.Error(), secret) {
 				t.Fatalf("Generate() error = %v", err)
 			}

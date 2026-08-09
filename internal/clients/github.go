@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,15 @@ var (
 
 const maxREADMEBytes = 4 << 20 // 4 MiB
 
+// コード文脈の選定上限。
+const (
+	maxCodeFiles         = 6
+	maxCodeCharacters    = 8000
+	maxCodeFileBytes     = 256 << 10 // 256 KiB
+	maxTreeResponseBytes = 8 << 20   // 8 MiB
+	maxCodeFileReadBytes = 1 << 20   // 1 MiB
+)
+
 var (
 	// github.com/owner/repo
 	urlRegex = regexp.MustCompile(`^(?:https?://)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$`)
@@ -32,6 +42,25 @@ var (
 type RepositoryData struct {
 	Meta   *core.RepoMeta
 	README string
+	Code   *CodeContext // nil ならコード文脈なし（フォールバック）
+}
+
+// CodeFile は選定されたソースファイル1件。
+type CodeFile struct {
+	Path    string
+	Content string
+}
+
+// CodeContext は AI 入力に使うコード文脈。Files が空でも nil でなければコード文脈あり。
+type CodeContext struct {
+	Files []CodeFile
+}
+
+// treeEntry は GitHub ツリー応答の blob/tree エントリ。
+type treeEntry struct {
+	Path string
+	Size int64
+	Type string
 }
 
 type GitHubClient interface {
@@ -105,7 +134,8 @@ type githubRepoMeta struct {
 	License         *struct {
 		SpdxID string `json:"spdx_id"`
 	} `json:"license"`
-	UpdatedAt time.Time `json:"updated_at"`
+	DefaultBranch string    `json:"default_branch"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 func (c *Client) sendRequest(ctx context.Context, method, path string, headers map[string]string) (*http.Response, error) {
@@ -151,6 +181,156 @@ func isValidSegment(s string) bool {
 		return false
 	}
 	return segmentRegex.MatchString(s)
+}
+
+// manifestOrder は優先1のマニフェスト定義順。
+var manifestOrder = []string{
+	"go.mod",
+	"package.json",
+	"Cargo.toml",
+	"pyproject.toml",
+	"requirements.txt",
+	"setup.py",
+	"composer.json",
+	"Gemfile",
+	"pom.xml",
+	"build.gradle",
+	"mix.exs",
+}
+
+// excludedDirectories は選定対象から除外する依存・生成物ディレクトリ。
+var excludedDirectories = map[string]bool{
+	"node_modules": true,
+	"vendor":       true,
+	"dist":         true,
+	"build":        true,
+	".git":         true,
+	".venv":        true,
+	".idea":        true,
+	"target":       true,
+	"out":          true,
+}
+
+// excludedFiles は選定対象から除外するロック・生成ファイル（ベース名）。
+var excludedFiles = map[string]bool{
+	"package-lock.json": true,
+	"yarn.lock":         true,
+	"pnpm-lock.yaml":    true,
+	"go.sum":            true,
+	"Cargo.lock":        true,
+	"Gemfile.lock":      true,
+	"composer.lock":     true,
+}
+
+func pathBase(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			return path[i+1:]
+		}
+	}
+	return path
+}
+
+func manifestRank(path string) (int, bool) {
+	base := pathBase(path)
+	for i, name := range manifestOrder {
+		if base == name {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func isEntryPoint(path string) bool {
+	if pathBase(path) == "main.go" {
+		return true
+	}
+	if strings.HasPrefix(path, "cmd/") {
+		return true
+	}
+	if strings.HasPrefix(path, "src/main.") || strings.HasPrefix(path, "lib/main.") {
+		return true
+	}
+	base := pathBase(path)
+	return strings.HasPrefix(base, "index.") || strings.HasPrefix(base, "cli.")
+}
+
+func excludedPath(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if excludedDirectories[segment] {
+			return true
+		}
+	}
+	return false
+}
+
+func excludedFile(path string) bool {
+	base := pathBase(path)
+	if excludedFiles[base] {
+		return true
+	}
+	return strings.HasSuffix(base, ".min.js") ||
+		strings.HasSuffix(base, ".min.css") ||
+		strings.HasSuffix(base, ".map")
+}
+
+func codeFileRank(path string) (class int, order int) {
+	if idx, ok := manifestRank(path); ok {
+		return 1, idx
+	}
+	if isEntryPoint(path) {
+		return 2, 0
+	}
+	return 3, 0
+}
+
+// selectCodeFiles はツリーエントリから決定的に取得対象パスを選定する。
+func selectCodeFiles(entries []treeEntry) []string {
+	candidates := make([]treeEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Type != "" && e.Type != "blob" {
+			continue
+		}
+		if e.Size > maxCodeFileBytes {
+			continue
+		}
+		if excludedPath(e.Path) || excludedFile(e.Path) {
+			continue
+		}
+		candidates = append(candidates, e)
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		ci, oi := codeFileRank(candidates[i].Path)
+		cj, oj := codeFileRank(candidates[j].Path)
+		if ci != cj {
+			return ci < cj
+		}
+		if ci == 1 {
+			if oi != oj {
+				return oi < oj
+			}
+			return candidates[i].Path < candidates[j].Path
+		}
+		if ci == 2 {
+			return candidates[i].Path < candidates[j].Path
+		}
+		if candidates[i].Size != candidates[j].Size {
+			return candidates[i].Size < candidates[j].Size
+		}
+		return candidates[i].Path < candidates[j].Path
+	})
+
+	selected := make([]string, 0, len(candidates))
+	totalChars := 0
+	for _, e := range candidates {
+		if len(selected) >= maxCodeFiles || totalChars >= maxCodeCharacters {
+			break
+		}
+		selected = append(selected, e.Path)
+		totalChars += int(e.Size)
+	}
+	return selected
 }
 
 func (c *Client) FetchRepository(ctx context.Context, owner, repo string) (*RepositoryData, error) {
@@ -229,7 +409,69 @@ func (c *Client) FetchRepository(ctx context.Context, owner, repo string) (*Repo
 	return &RepositoryData{
 		Meta:   meta,
 		README: string(readmeBytes),
+		Code:   c.fetchCodeContext(ctx, owner, repo, gMeta.DefaultBranch),
 	}, nil
+}
+
+// fetchCodeContext はツリーからファイルを選定して内容を取得する。失敗時は nil（フォールバック）。
+func (c *Client) fetchCodeContext(ctx context.Context, owner, repo, defaultBranch string) *CodeContext {
+	if defaultBranch == "" {
+		return nil
+	}
+	treePath := fmt.Sprintf("/repos/%s/%s/git/trees/%s?recursive=1", owner, repo, defaultBranch)
+	treeResp, err := c.sendRequest(ctx, "GET", treePath, nil)
+	if err != nil {
+		return nil
+	}
+	defer treeResp.Body.Close()
+	if treeResp.StatusCode != http.StatusOK {
+		return nil
+	}
+	treeBytes, err := io.ReadAll(io.LimitReader(treeResp.Body, maxTreeResponseBytes))
+	if err != nil {
+		return nil
+	}
+	var treeResponse struct {
+		Tree []treeEntry `json:"tree"`
+	}
+	if err := json.Unmarshal(treeBytes, &treeResponse); err != nil {
+		return nil
+	}
+	paths := selectCodeFiles(treeResponse.Tree)
+	if len(paths) == 0 {
+		return nil
+	}
+	files := make([]CodeFile, 0, len(paths))
+	for _, path := range paths {
+		content, ok := c.fetchFileContent(ctx, owner, repo, path)
+		if !ok {
+			continue
+		}
+		files = append(files, CodeFile{Path: path, Content: content})
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return &CodeContext{Files: files}
+}
+
+func (c *Client) fetchFileContent(ctx context.Context, owner, repo, path string) (string, bool) {
+	contentPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
+	resp, err := c.sendRequest(ctx, "GET", contentPath, map[string]string{
+		"Accept": "application/vnd.github.raw",
+	})
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCodeFileReadBytes))
+	if err != nil {
+		return "", false
+	}
+	return string(body), true
 }
 
 type HTTPError struct {
