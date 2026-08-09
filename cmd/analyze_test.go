@@ -55,6 +55,7 @@ type analyzeDepsBuilder struct {
 	clients   map[string]*recordingAIClient
 	meta      *core.RepoMeta
 	secrets   map[secretstore.Key]string
+	storeErr  map[secretstore.Key]error
 	githubErr error
 }
 
@@ -77,6 +78,11 @@ func (b *analyzeDepsBuilder) secretStore(secrets map[secretstore.Key]string) *an
 	return b
 }
 
+func (b *analyzeDepsBuilder) secretStoreErrors(errs map[secretstore.Key]error) *analyzeDepsBuilder {
+	b.storeErr = errs
+	return b
+}
+
 func (b *analyzeDepsBuilder) gitHubError(err error) *analyzeDepsBuilder {
 	b.githubErr = err
 	return b
@@ -95,9 +101,11 @@ func (b *analyzeDepsBuilder) build() (commandDependencies, string, *bytes.Buffer
 			secretstore.GeminiAPIKey:    "gemini",
 		}
 	}
+	store := testutil.NewMemorySecretStore(secrets)
+	store.GetErrors = b.storeErr
 	app := applicationDependencies{
 		loadConfig:  func() (*core.Config, error) { return b.cfg, nil },
-		secretStore: testutil.NewMemorySecretStore(secrets),
+		secretStore: store,
 		warn:        func(message string) { fmt.Fprintln(warn, message) },
 		dataPath: func() (string, error) {
 			return path, nil
@@ -301,6 +309,44 @@ func TestAnalyzePlainOutputContainsMetaHeaderAndSections(t *testing.T) {
 	}
 }
 
+func TestAnalyzePlainOutputSanitizesKeywordsANSI(t *testing.T) {
+	analysis := testAnalysis()
+	analysis.Keywords = []string{"go", "\x1b[31mANSI\x1b[0m"}
+	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"})
+	b.provider("claude", &recordingAIClient{analysis: analysis})
+	deps, _, _ := b.build()
+
+	out, _, err := executeAnalyze(t, deps, "analyze", "owner/repo")
+	if err != nil {
+		t.Fatalf("analyze error = %v", err)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("plain output contains ANSI escape in keywords: %q", out)
+	}
+	if !strings.Contains(out, "go") {
+		t.Fatalf("plain output lost valid keyword: %q", out)
+	}
+}
+
+func TestAnalyzePlainOutputSanitizesKeywordsControlChars(t *testing.T) {
+	analysis := testAnalysis()
+	analysis.Keywords = []string{"go", "cli\x00ctrl"}
+	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"})
+	b.provider("claude", &recordingAIClient{analysis: analysis})
+	deps, _, _ := b.build()
+
+	out, _, err := executeAnalyze(t, deps, "analyze", "owner/repo")
+	if err != nil {
+		t.Fatalf("analyze error = %v", err)
+	}
+	if strings.Contains(out, "\x00") {
+		t.Fatalf("plain output contains control character: %q", out)
+	}
+	if !strings.Contains(out, "go") || !strings.Contains(out, "clictrl") {
+		t.Fatalf("plain output lost keyword content: %q", out)
+	}
+}
+
 func TestAnalyzePlainOutputContainsNoANSI(t *testing.T) {
 	analysis := testAnalysis()
 	analysis.Summary = "plain summary with \x1b[31mANSI\x1b[0m text"
@@ -418,12 +464,12 @@ func TestAnalyzeSavesResultToStore(t *testing.T) {
 	}
 }
 
-func TestAnalyzeWarningsGoToStderr(t *testing.T) {
+func TestAnalyzeWarningsGoToErrOut(t *testing.T) {
 	analysis := testAnalysis()
 	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"})
 	b.provider("claude", &recordingAIClient{analysis: analysis})
 	b.gitHubError(errors.New("refresh failed"))
-	deps, path, warn := b.build()
+	deps, path, _ := b.build()
 
 	entry := &core.Entry{
 		FullName: "owner/repo",
@@ -435,18 +481,45 @@ func TestAnalyzeWarningsGoToStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _, err := executeAnalyze(t, deps, "analyze", "owner/repo")
+	out, errOut, err := executeAnalyze(t, deps, "analyze", "owner/repo")
 	if err != nil {
 		t.Fatalf("cache-hit analyze error = %v", err)
 	}
-	if !strings.Contains(warn.String(), "GitHub からメタ情報を取得できませんでした") {
-		t.Fatalf("warnings = %q", warn.String())
+	if !strings.Contains(errOut, "警告: GitHub からメタ情報を取得できませんでした") {
+		t.Fatalf("stderr = %q, want warning with prefix", errOut)
 	}
 	if strings.Contains(out, "GitHub からメタ情報") {
 		t.Fatalf("warning leaked into stdout: %q", out)
 	}
 	if !strings.Contains(out, "AI summary") {
 		t.Fatalf("cached result missing from stdout: %q", out)
+	}
+}
+
+func TestAnalyzeSecretWarningsGoToErrOut(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"})
+	b.provider("claude", &recordingAIClient{analysis: testAnalysis()})
+	b.secretStoreErrors(map[secretstore.Key]error{
+		secretstore.GitHubToken: errors.New("backend down"),
+	})
+	deps, _, _ := b.build()
+
+	out, errOut, err := executeAnalyze(t, deps, "analyze", "owner/repo")
+	if err != nil {
+		t.Fatalf("analyze error = %v", err)
+	}
+	if !strings.Contains(errOut, "警告: GitHub tokenをOS資格情報ストアから読み込めませんでした") {
+		t.Fatalf("stderr = %q, want secret resolution warning", errOut)
+	}
+	if strings.Contains(out, "GitHub token") {
+		t.Fatalf("secret warning leaked into stdout: %q", out)
+	}
+	if !strings.Contains(out, "AI summary") {
+		t.Fatalf("analysis missing from stdout: %q", out)
 	}
 }
 

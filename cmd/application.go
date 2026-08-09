@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/issy20/reporepo/internal/clients"
@@ -36,6 +37,7 @@ type applicationDependencies struct {
 	newClaude      func(string, string, *http.Client) clients.AIClient
 	newOpenAI      func(string, string, *http.Client) clients.AIClient
 	newGemini      func(string, string) (clients.AIClient, error)
+	ghAuthToken    func() (string, error)
 	runTUI         func(tui.Dependencies, *core.Config) error
 }
 
@@ -66,6 +68,7 @@ func defaultApplicationDependencies() applicationDependencies {
 		newGemini: func(key, model string) (clients.AIClient, error) {
 			return clients.NewGeminiClient(key, model)
 		},
+		ghAuthToken: ghCLIToken,
 		runTUI: func(deps tui.Dependencies, cfg *core.Config) error {
 			return tui.Run(deps, cfg)
 		},
@@ -80,13 +83,13 @@ type runtime struct {
 	store  *store.Store
 }
 
-func buildRuntime(deps applicationDependencies) (*runtime, error) {
+func buildRuntime(deps applicationDependencies, warn func(string)) (*runtime, error) {
 	defaults := defaultApplicationDependencies()
+	if warn == nil {
+		warn = defaults.warn
+	}
 	if deps.dataPath == nil {
 		deps.dataPath = defaults.dataPath
-	}
-	if deps.warn == nil {
-		deps.warn = defaults.warn
 	}
 	if deps.newHTTP == nil {
 		deps.newHTTP = defaults.newHTTP
@@ -132,10 +135,15 @@ func buildRuntime(deps applicationDependencies) (*runtime, error) {
 
 	runtimeConfig, warnings, err := resolveRuntimeSecrets(cfg, deps.secretStore)
 	for _, warning := range warnings {
-		deps.warn(warning)
+		warn(warning)
 	}
 	if err != nil {
 		return nil, err
+	}
+	if runtimeConfig.GithubToken == "" && deps.ghAuthToken != nil {
+		if token, ghErr := deps.ghAuthToken(); ghErr == nil && strings.TrimSpace(token) != "" {
+			runtimeConfig.GithubToken = strings.TrimSpace(token)
+		}
 	}
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
@@ -170,7 +178,7 @@ func buildRuntime(deps applicationDependencies) (*runtime, error) {
 }
 
 func runApplicationWith(deps applicationDependencies) error {
-	rt, err := buildRuntime(deps)
+	rt, err := buildRuntime(deps, deps.warn)
 	if err != nil {
 		return err
 	}

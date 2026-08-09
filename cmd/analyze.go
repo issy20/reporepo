@@ -21,7 +21,7 @@ func newAnalyzeCommand(deps commandDependencies) *cobra.Command {
 			language, _ := cmd.Flags().GetString("language")
 			jsonOutput, _ := cmd.Flags().GetBool("json")
 			force, _ := cmd.Flags().GetBool("force")
-			return runAnalyze(deps, args[0], provider, language, jsonOutput, force, cmd.OutOrStdout())
+			return runAnalyze(deps, args[0], provider, language, jsonOutput, force, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringP("provider", "p", "", "AI プロバイダ (claude, openai, gemini)")
@@ -31,11 +31,11 @@ func newAnalyzeCommand(deps commandDependencies) *cobra.Command {
 	return cmd
 }
 
-func runAnalyze(deps commandDependencies, input, provider, language string, jsonOutput, force bool, out io.Writer) error {
+func runAnalyze(deps commandDependencies, input, provider, language string, jsonOutput, force bool, out, errOut io.Writer) error {
 	if deps.app == nil {
 		return errors.New("ランタイムを構築できません")
 	}
-	rt, err := buildRuntime(*deps.app)
+	rt, err := buildRuntime(*deps.app, func(msg string) { fmt.Fprintln(errOut, "警告:", msg) })
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func runAnalyze(deps commandDependencies, input, provider, language string, json
 		return err
 	}
 	for _, warning := range result.Warnings {
-		deps.app.warn(warning)
+		fmt.Fprintln(errOut, "警告:", warning)
 	}
 	return writeAnalyzeOutput(out, result, language, jsonOutput)
 }

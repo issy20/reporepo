@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,6 +100,48 @@ func TestResolveRuntimeSecretsBackendFailuresAreSafeWarnings(t *testing.T) {
 	if got := operationKeys(store.Calls, "Get"); len(got) != 3 {
 		t.Fatalf("Store.Get() calls = %v, want GitHub, OpenAI, and Gemini", got)
 	}
+}
+
+func TestGHCLITokenReturnsTokenFromGHAuthToken(t *testing.T) {
+	dir := writeFakeGH(t, "#!/bin/sh\necho 'gh-token'\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	token, err := ghCLIToken()
+	if err != nil {
+		t.Fatalf("ghCLIToken() error = %v", err)
+	}
+	if token != "gh-token" {
+		t.Fatalf("ghCLIToken() = %q, want gh-token", token)
+	}
+}
+
+func TestGHCLITokenTrimsOutput(t *testing.T) {
+	dir := writeFakeGH(t, "#!/bin/sh\necho '  gh-token  '\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	token, err := ghCLIToken()
+	if err != nil {
+		t.Fatalf("ghCLIToken() error = %v", err)
+	}
+	if token != "gh-token" {
+		t.Fatalf("ghCLIToken() = %q, want trimmed gh-token", token)
+	}
+}
+
+func TestGHCLITokenFailureReturnsError(t *testing.T) {
+	dir := writeFakeGH(t, "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err := ghCLIToken()
+	if err == nil {
+		t.Fatal("ghCLIToken() error = nil, want exit failure")
+	}
+}
+
+func writeFakeGH(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func TestResolveRuntimeSecretsRejectsMissingAISecrets(t *testing.T) {

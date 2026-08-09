@@ -137,6 +137,17 @@ reporepo run
 
 GitHub tokenは任意です（未設定でも動作しますが、GitHub APIの低いレート制限が適用されます）。Anthropic / OpenAI / GeminiのAPI keyはいずれか一つ以上が必要です。
 
+#### GitHub tokenの自動借用
+
+GitHub tokenが環境変数・資格情報ストアのどちらにも無い場合、`gh` CLIが認証済みなら `gh auth token` の出力を自動的に借用します（`gh` でのログインだけでGitHub APIを認証付きで呼べます）。このトークンは実行時のメモリ内だけで使い、資格情報ストアや設定JSONへ保存しません。
+
+```bash
+gh auth login        # 初回のみ
+reporepo run
+```
+
+`gh` が無い・認証されていない環境では従来どおり未認証（低いレート制限）で動作します。
+
 ### 設定ウィザード
 
 `reporepo config` では、secret・既定provider・既定言語を段階的に設定します。

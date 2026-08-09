@@ -65,9 +65,17 @@ GitHub tokenとAPI key（以下「secret」）は設定JSONへ保存せず、OS�
 
 1. 環境変数（`GITHUB_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`）
 2. OSの資格情報ストア
-3. 未設定
+3. GitHub tokenのみ: `gh` CLIの認証トークン（`gh auth token`）
+4. 未設定
 
-環境変数はその実行中だけ優先し、値を資格情報ストアや設定JSONへ書き戻さない。資格情報ストアが利用できない場合も、secretを設定JSONへ平文で自動フォールバックしない。必要なsecretが環境変数にも存在しなければ、安全なエラーと設定方法を表示する。
+環境変数はその実行中だけ優先し、値を資格情報ストアや設定JSONへ書き戻さない。資格情報ストアが利用できない場合も、secretを設定JSONへ平文で自動フォールバックしない。AI providerのsecret（Anthropic / OpenAI / Gemini API key）が取得できない場合は安全なエラーと設定方法を表示する。GitHub tokenは未設定でも動作するが、`gh` CLIが認証済みならそのOAuthトークンを借用してレート制限を緩和できる。
+
+**GitHub tokenの `gh` フォールバック。** 環境変数とOS資格情報ストアの両方にGitHub tokenがない場合に限り、`gh auth token` の標準出力を実行時ConfigのGitHub tokenとして使用する。これは本人のマシン上の本人のトークンを同じ用途（GitHub REST API でのリポジトリ読み取り）で使うだけであり、外部へ送信・保存しない。適用条件と挙動は次のとおり。
+
+- `gh` コマンドが存在しない、認証されていない、または `gh auth token` の取得に失敗した場合は未設定として扱い、エラーにしない。
+- `gh auth token` の出力は資格情報ストアや設定JSONへ書き戻さない。取得したトークンは実行時のメモリ内だけで保持し、ログ・エラー・stdout/stderrへ含めない。
+- このフォールバックはGitHub token専用であり、Anthropic / OpenAI / GeminiのAPI keyには適用しない。
+- トークンのスコープ不足などでGitHub APIが失敗した場合は、`GITHUB_TOKEN` または資格情報ストアでの明示設定を案内する。
 
 設定ウィザードでは既存secretの値を表示せず、「設定済み / 未設定」の状態だけを表示する。空入力は既存値を維持し、`-` は資格情報ストアからの削除を意味する。secret入力はTTY上でechoしない。
 
@@ -130,7 +138,7 @@ helpはCobraのcommand treeとflag情報を正とし、独自文字列との二�
 
 **失敗時のフォールバック。** ツリー取得失敗、空リポジトリ、選定ファイルゼロはエラーにせず、コード文脈なし（README のみ）で解析を続行する。個別ファイルの取得失敗はそのファイルだけスキップする。解析結果は劣化するが、解析そのものは成功とする。
 
-**レート制限への配慮。** 解析 1 回あたりの GitHub API リクエストは最大 10 回（メタ + 言語 + README + ツリー + 最大 6 ファイル）。未認証（60 req/h）では 1 時間に数回が限度のため、トークン設定を推奨する。ツリーの `size` を利用して巨大ファイルを取得前に除外し、無駄なリクエストを防ぐ。
+**レート制限への配慮。** 解析 1 回あたりの GitHub API リクエストは最大 10 回（メタ + 言語 + README + ツリー + 最大 6 ファイル）。未認証（60 req/h）では 1 時間に数回が限度のため、トークン設定を推奨する。`gh` CLIが認証済みなら明示設定なしでもそのトークンを自動借用して認証できる（2.7）。ツリーの `size` を利用して巨大ファイルを取得前に除外し、無駄なリクエストを防ぐ。
 
 **入力バージョン管理。** 解析結果は「同一入力」のときだけキャッシュが一致する。AI への入力定義（README の切り詰め、コード文脈の追加、プロンプト文言など）が変わったときは `Analysis.PromptVersion` を bump する。古い `PromptVersion` の解析はキャッシュ一致とせず、次に開いたときに 1 回だけ再生成する。これは 2.6 の例外ではなく「入力が変わったので同一入力ではない」という扱いで、アップグレード後は開いたエントリから順に新しい解析へ置き換わる。
 
@@ -210,7 +218,7 @@ secretはOSの資格情報ストアへ保存し、設定JSON、データJSON、�
 
 資格情報ストアが利用できない環境で平文保存へ暗黙に劣化してはならない。特にLinux/*BSDでは、Secret Serviceを提供するGNOME Keyring、KWallet互換サービス、KeePassXC等とD-Busセッションが必要になる場合がある。ヘッドレス環境などで利用できない場合は、環境変数による実行を案内する。
 
-サーバー・認証は持たない（各ユーザーが自分のキーを使うため不要）。単一バイナリで配布でき、CGO不要でクロスコンパイル可能とする。GitHub token未設定でも動作するが、その場合はGitHub APIの低いレート制限が適用される。READMEはAIへ渡す前に文字数で切り詰め、コストとレイテンシを抑制する。コード文脈（2.9）も同様に件数・合計文字数の上限で切り詰める。コードファイルとパスはREADMEと同様にuntrusted dataとして扱い、プロンプト注入対策を適用する。
+サーバー・認証は持たない（各ユーザーが自分のキーを使うため不要）。単一バイナリで配布でき、CGO不要でクロスコンパイル可能とする。GitHub token未設定でも動作するが、その場合はGitHub APIの低いレート制限が適用される。`gh` CLIが認証済みなら、GitHub tokenを明示設定しなくてもそのトークンを自動借用して認証できる（2.7）。借用したトークンは実行時のメモリ内のみで保持し、資格情報ストアや設定JSONへ書き戻さない。READMEはAIへ渡す前に文字数で切り詰め、コストとレイテンシを抑制する。コード文脈（2.9）も同様に件数・合計文字数の上限で切り詰める。コードファイルとパスはREADMEと同様にuntrusted dataとして扱い、プロンプト注入対策を適用する。
 
 OS資格情報ストアは平文設定ファイルより安全な保存先だが、同一ユーザー権限で動作する悪意あるプロセスからの完全な隔離を保証するものではない。secretをログへ出さない、不要に長時間保持しない、外部エラーをサニタイズする防御も継続する。
 
@@ -276,18 +284,19 @@ reporepo/
 
 ### 4.5 設定・secret読み込みフロー
 
-アプリケーション起動時は、非secret設定、OS資格情報ストア、環境変数を次の順序で組み立てる。
+アプリケーション起動時は、非secret設定、OS資格情報ストア、環境変数、GitHub token用の `gh` フォールバックを次の順序で組み立てる。
 
 ```text
 config.json（provider / language）
+  + 環境変数（GITHUB_TOKEN / ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY）
   + OS資格情報ストア（GitHub / Anthropic / OpenAI / Gemini）
-  + 環境変数による上書き
+  + GitHub tokenのみ: gh auth token
   → 実行時Config
   → 利用可能なproviderだけをクライアント化
   → TUI起動
 ```
 
-OS資格情報ストアへのアクセスはinterface越しに行い、TUI、外部APIクライアント、設定JSON層がkeyringライブラリへ直接依存しない。CLIがcomposition rootとして実行時Configを組み立てる。
+OS資格情報ストアへのアクセスはinterface越しに行い、TUI、外部APIクライアント、設定JSON層がkeyringライブラリへ直接依存しない。CLIがcomposition rootとして実行時Configを組み立てる。`gh auth token` の実行も同じく注入可能な境界として分離し、`cmd` がsecret解決時に呼び出せるようにする（テストではモック可能）。`gh` の実行はsecretの保存・書き戻しを伴わず、失敗時は未設定として扱う。
 
 CLI presentationは文字列の意味と表示方法だけを担当し、設定保存、secret操作、外部API呼び出しなどのビジネスロジックを持たない。`cmd` は成功、警告、エラー、summary等のsemanticな表示要求をpresentation境界へ渡す。presentationはCobraから渡されたstdout/stderr writerとterminal capabilityを使って描画し、globalな標準出力や実terminalを直接参照しない。
 

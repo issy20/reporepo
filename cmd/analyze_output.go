@@ -40,7 +40,11 @@ func formatAnalyzePlain(result *analyzer.Result, language string, now time.Time)
 	b.WriteString("\n# Background\n")
 	b.WriteString(safeText(a.Background))
 	b.WriteString("\n# Keywords\n")
-	b.WriteString(strings.Join(a.Keywords, ", "))
+	keywords := make([]string, len(a.Keywords))
+	for i, keyword := range a.Keywords {
+		keywords[i] = safeText(keyword)
+	}
+	b.WriteString(strings.Join(keywords, ", "))
 	b.WriteByte('\n')
 	if a.IsStale(entry.RepoMeta) {
 		b.WriteString("解析はリポジトリ更新前のものです（--force で再生成）\n")

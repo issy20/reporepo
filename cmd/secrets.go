@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/issy20/reporepo/internal/core"
@@ -63,6 +65,17 @@ func resolveSecret(envName string, key secretstore.Key, store secretstore.Store,
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+// ghCLIToken は gh コマンドの認証トークンを取得する。失敗時はエラーを返す。
+func ghCLIToken() (string, error) {
+	cmd := exec.Command("gh", "auth", "token")
+	cmd.Stderr = io.Discard
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func migrateLegacySecrets(cfg *core.Config, legacy core.LegacySecrets, store secretstore.Store, saveConfig func(*core.Config) error) error {

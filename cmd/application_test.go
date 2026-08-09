@@ -186,6 +186,277 @@ func TestRunApplicationEnvironmentOnlySucceedsWhenStoreUnavailable(t *testing.T)
 	}
 }
 
+func TestRunApplicationPassesWarningsToConfiguredWarn(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	secretStore := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.AnthropicAPIKey: "anthropic",
+	})
+	secretStore.GetErrors = map[secretstore.Key]error{
+		secretstore.GitHubToken: errors.New("backend down"),
+	}
+	var warnings []string
+	err := runApplicationWith(applicationDependencies{
+		loadConfig:  func() (*core.Config, error) { return &core.Config{DefaultProvider: "claude"}, nil },
+		secretStore: secretStore,
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		warn:        func(msg string) { warnings = append(warnings, msg) },
+		runTUI:      func(tui.Dependencies, *core.Config) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("runApplicationWith() error = %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "GitHub tokenをOS資格情報ストアから読み込めませんでした") {
+		t.Fatalf("warnings = %v, want secret resolution warning via deps.warn", warnings)
+	}
+}
+
+func TestBuildRuntimeFallsBackToGHTokenWhenUnset(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	ghCalls := 0
+	rt, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "gh-token" {
+				t.Fatalf("GitHub token = %q, want gh-token", token)
+			}
+			return nil
+		},
+		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+	if ghCalls != 1 {
+		t.Fatalf("ghAuthToken calls = %d, want 1", ghCalls)
+	}
+	if rt == nil {
+		t.Fatalf("buildRuntime() = nil")
+	}
+}
+
+func TestBuildRuntimeGHTokenIsTrimmed(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) { return "  gh-token\n", nil },
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "gh-token" {
+				t.Fatalf("GitHub token = %q, want trimmed gh-token", token)
+			}
+			return nil
+		},
+		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+}
+
+func TestBuildRuntimeGHTokenNotCalledWhenEnvSet(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "env-github")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	ghCalls := 0
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "env-github" {
+				t.Fatalf("GitHub token = %q, want env-github", token)
+			}
+			return nil
+		},
+		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+	if ghCalls != 0 {
+		t.Fatalf("ghAuthToken calls = %d, want 0", ghCalls)
+	}
+}
+
+func TestBuildRuntimeGHTokenNotCalledWhenStored(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	ghCalls := 0
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.GitHubToken:     "stored-github",
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "stored-github" {
+				t.Fatalf("GitHub token = %q, want stored-github", token)
+			}
+			return nil
+		},
+		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+	if ghCalls != 0 {
+		t.Fatalf("ghAuthToken calls = %d, want 0", ghCalls)
+	}
+}
+
+func TestBuildRuntimeGHTokenFailureIsUnset(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) { return "", errors.New("gh unavailable") },
+		newClaude:   func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v, want success with unset GitHub token", err)
+	}
+}
+
+func TestBuildRuntimeGHTokenNotPersisted(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.AnthropicAPIKey: "anthropic",
+	})
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: store,
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) { return "gh-token", nil },
+		newClaude:   func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRuntime() error = %v", err)
+	}
+	if _, exists := store.Snapshot()[secretstore.GitHubToken]; exists {
+		t.Fatal("gh token was persisted to secret store")
+	}
+	for _, call := range store.Calls {
+		if call.Method == "Set" {
+			t.Fatalf("secret store received Set during runtime build: %v", call)
+		}
+	}
+}
+
+func TestBuildRuntimeGHTokenDoesNotSatisfyAIKeys(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	ghCalls := 0
+	_, err := buildRuntime(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(nil),
+		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+	}, nil)
+	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
+		t.Fatalf("error = %v, want AI key guidance", err)
+	}
+	if ghCalls != 0 {
+		t.Fatalf("ghAuthToken calls = %d, want 0", ghCalls)
+	}
+}
+
+func TestRunApplicationGHTokenFallback(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	ghCalls := 0
+	err := runApplicationWith(applicationDependencies{
+		loadConfig: func() (*core.Config, error) {
+			return &core.Config{DefaultProvider: "claude"}, nil
+		},
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath: func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "gh-token" {
+				t.Fatalf("GitHub token = %q, want gh-token", token)
+			}
+			return nil
+		},
+		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
+		runTUI:    func(tui.Dependencies, *core.Config) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("runApplicationWith() error = %v", err)
+	}
+	if ghCalls != 1 {
+		t.Fatalf("ghAuthToken calls = %d, want 1", ghCalls)
+	}
+}
+
 func TestRunApplicationUsesOnlyAvailableOpenAIProvider(t *testing.T) {
 	loaded := &core.Config{DefaultProvider: "claude"}
 	claudeCalls, openAICalls := 0, 0
@@ -407,7 +678,7 @@ func TestBuildRuntimeBuildsSameClientsAsRun(t *testing.T) {
 			}
 			return stubAIClient{}
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -427,7 +698,7 @@ func TestBuildRuntimeBuildsSameClientsAsRun(t *testing.T) {
 
 func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 	t.Run("config load", func(t *testing.T) {
-		_, err := buildRuntime(applicationDependencies{loadConfig: func() (*core.Config, error) { return nil, errors.New("secret") }})
+		_, err := buildRuntime(applicationDependencies{loadConfig: func() (*core.Config, error) { return nil, errors.New("secret") }}, nil)
 		if err == nil || err.Error() != "設定を読み込めませんでした" || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("error = %v", err)
 		}
@@ -436,7 +707,7 @@ func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 		_, err := buildRuntime(applicationDependencies{
 			loadConfig:  func() (*core.Config, error) { return &core.Config{}, nil },
 			secretStore: testutil.NewMemorySecretStore(nil),
-		})
+		}, nil)
 		if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 			t.Fatalf("error = %v", err)
 		}
@@ -448,7 +719,7 @@ func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 				secretstore.AnthropicAPIKey: "key",
 			}),
 			dataPath: func() (string, error) { return "", errors.New("secret") },
-		})
+		}, nil)
 		if err == nil || err.Error() != "データ保存先を解決できませんでした" || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("error = %v", err)
 		}
