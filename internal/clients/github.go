@@ -65,6 +65,7 @@ type treeEntry struct {
 
 type GitHubClient interface {
 	FetchRepository(ctx context.Context, owner, repo string) (*RepositoryData, error)
+	FetchRepositoryMeta(ctx context.Context, owner, repo string) (*core.RepoMeta, error)
 }
 
 type Client struct {
@@ -333,6 +334,24 @@ func selectCodeFiles(entries []treeEntry) []string {
 	return selected
 }
 
+// repoMetaFromGitHub は GitHub の /repos 応答を RepoMeta へ変換する。Languages は空のまま。
+func repoMetaFromGitHub(g githubRepoMeta) *core.RepoMeta {
+	meta := &core.RepoMeta{
+		FullName:    g.FullName,
+		Description: g.Description,
+		Stars:       g.StargazersCount,
+		Forks:       g.ForksCount,
+		Language:    g.Language,
+		Topics:      g.Topics,
+		URL:         g.HTMLURL,
+		UpdatedAt:   g.UpdatedAt,
+	}
+	if g.License != nil {
+		meta.License = g.License.SpdxID
+	}
+	return meta
+}
+
 func (c *Client) FetchRepository(ctx context.Context, owner, repo string) (*RepositoryData, error) {
 	if !isValidSegment(owner) || !isValidSegment(repo) {
 		return nil, errors.New("invalid owner or repository name")
@@ -391,26 +410,37 @@ func (c *Client) FetchRepository(ctx context.Context, owner, repo string) (*Repo
 		return nil, err
 	}
 
-	meta := &core.RepoMeta{
-		FullName:    gMeta.FullName,
-		Description: gMeta.Description,
-		Stars:       gMeta.StargazersCount,
-		Forks:       gMeta.ForksCount,
-		Language:    gMeta.Language,
-		Topics:      gMeta.Topics,
-		Languages:   languages,
-		URL:         gMeta.HTMLURL,
-		UpdatedAt:   gMeta.UpdatedAt,
-	}
-	if gMeta.License != nil {
-		meta.License = gMeta.License.SpdxID
-	}
+	meta := repoMetaFromGitHub(gMeta)
+	meta.Languages = languages
 
 	return &RepositoryData{
 		Meta:   meta,
 		README: string(readmeBytes),
 		Code:   c.fetchCodeContext(ctx, owner, repo, gMeta.DefaultBranch),
 	}, nil
+}
+
+// FetchRepositoryMeta は /repos/{owner}/{repo} の1リクエストでメタ情報のみ返す。
+func (c *Client) FetchRepositoryMeta(ctx context.Context, owner, repo string) (*core.RepoMeta, error) {
+	if !isValidSegment(owner) || !isValidSegment(repo) {
+		return nil, errors.New("invalid owner or repository name")
+	}
+	metaPath := fmt.Sprintf("/repos/%s/%s", owner, repo)
+	resp, err := c.sendRequest(ctx, "GET", metaPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, handleResponseError(resp)
+	}
+
+	var gMeta githubRepoMeta
+	if err := json.NewDecoder(resp.Body).Decode(&gMeta); err != nil {
+		return nil, err
+	}
+	return repoMetaFromGitHub(gMeta), nil
 }
 
 // fetchCodeContext はツリーからファイルを選定して内容を取得する。失敗時は nil（フォールバック）。

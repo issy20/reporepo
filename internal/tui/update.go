@@ -36,6 +36,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.current = msg.entry
 		m.state = stateDetail
 		m.errMessage = ""
+		m.warnings = msg.warnings
 		m.reloadEntries()
 		m.setDetailContent()
 		return m, nil
@@ -46,6 +47,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 		m.requestID++
 		m.state = stateInput
+		m.warnings = nil
 		if msg.err == nil {
 			m.errMessage = "解析に失敗しました"
 		} else {

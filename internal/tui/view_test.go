@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
@@ -133,7 +134,7 @@ func TestViewsContainRequiredInformation(t *testing.T) {
 	m.viewport.Width = 78
 	m.viewport.Height = 21
 	m.current = &core.Entry{FullName: "owner/repo", RepoMeta: &core.RepoMeta{Description: "description", Stars: 3}, Analyses: map[string]*core.Analysis{"ja": {Summary: "summary", TechStack: "Go", Background: "background", Keywords: []string{"tui"}}}}
-	m.renderer = fakeRenderer{output: detailMarkdown(m.current, "ja")}
+	m.renderer = fakeRenderer{output: detailMarkdown(m.current, "ja", time.Now())}
 	m.setDetailContent()
 	detail := m.View()
 	for _, want := range []string{"owner/repo", "Summary", "summary", "Tech Stack", "Background", "Keywords"} {
@@ -254,14 +255,14 @@ func TestDetailMarkdownContainsAllMetadataAndAnalysisFields(t *testing.T) {
 		RepoMeta: &core.RepoMeta{Description: "説明", Stars: 12, Forks: 3, Language: "Go"},
 		Analyses: map[string]*core.Analysis{"ja": {Summary: "要約", TechStack: "技術", Background: "背景", Keywords: []string{"一", "二"}}},
 	}
-	got := detailMarkdown(entry, "ja")
+	got := detailMarkdown(entry, "ja", time.Now())
 	for _, want := range []string{"所有者/repository", "説明", "12", "3", "Go", "要約", "技術", "背景", "一, 二"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %q", want, got)
 		}
 	}
 	entry.Analyses["ja"].Keywords = nil
-	if got := detailMarkdown(entry, "ja"); !strings.Contains(got, "## Keywords") {
+	if got := detailMarkdown(entry, "ja", time.Now()); !strings.Contains(got, "## Keywords") {
 		t.Fatalf("empty keywords removed section: %q", got)
 	}
 }
@@ -303,5 +304,116 @@ func TestNewProgramAndInit(t *testing.T) {
 	}
 	if NewProgram(Dependencies{Store: &fakeStore{}}, nil) == nil {
 		t.Fatal("NewProgram returned nil")
+	}
+}
+
+func TestDetailMarkdownShowsFetchedAndAnalyzedDays(t *testing.T) {
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	entry := &core.Entry{
+		FullName: "owner/repo",
+		RepoMeta: &core.RepoMeta{FetchedAt: now.Add(-3 * 24 * time.Hour)},
+		Analyses: map[string]*core.Analysis{"ja": {CreatedAt: now.Add(-5 * 24 * time.Hour)}},
+	}
+	got := detailMarkdown(entry, "ja", now)
+	if !strings.Contains(got, "取得: 3日前 / 解析: 5日前") {
+		t.Fatalf("missing fetched/analyzed header: %q", got)
+	}
+}
+
+func TestDetailMarkdownShowsStaleGuidance(t *testing.T) {
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	t.Run("stale", func(t *testing.T) {
+		entry := &core.Entry{
+			FullName: "owner/repo",
+			RepoMeta: &core.RepoMeta{FetchedAt: now, UpdatedAt: now.Add(-2 * 24 * time.Hour)},
+			Analyses: map[string]*core.Analysis{"ja": {CreatedAt: now.Add(-10 * 24 * time.Hour)}},
+		}
+		got := detailMarkdown(entry, "ja", now)
+		if !strings.Contains(got, "更新前のものです") {
+			t.Fatalf("missing stale guidance: %q", got)
+		}
+	})
+	t.Run("fresh", func(t *testing.T) {
+		entry := &core.Entry{
+			FullName: "owner/repo",
+			RepoMeta: &core.RepoMeta{FetchedAt: now, UpdatedAt: now.Add(-10 * 24 * time.Hour)},
+			Analyses: map[string]*core.Analysis{"ja": {CreatedAt: now.Add(-2 * 24 * time.Hour)}},
+		}
+		got := detailMarkdown(entry, "ja", now)
+		if strings.Contains(got, "更新前のものです") {
+			t.Fatalf("unexpected stale guidance: %q", got)
+		}
+	})
+}
+
+func TestInputViewMarksStaleEntriesWithoutExternalCalls(t *testing.T) {
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	stale := &core.Entry{
+		FullName: "stale/repo",
+		RepoMeta: &core.RepoMeta{UpdatedAt: now.Add(-1 * 24 * time.Hour)},
+		Analyses: map[string]*core.Analysis{"ja": {CreatedAt: now.Add(-5 * 24 * time.Hour)}},
+	}
+	fresh := &core.Entry{
+		FullName: "fresh/repo",
+		RepoMeta: &core.RepoMeta{UpdatedAt: now.Add(-1 * 24 * time.Hour)},
+		Analyses: map[string]*core.Analysis{"ja": {CreatedAt: now}},
+	}
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.now = func() time.Time { return now }
+	m.entries = []*core.Entry{stale, fresh}
+	m.refreshVisible()
+	view := m.View()
+	if !strings.Contains(view, "stale/repo ◌") || strings.Contains(view, "fresh/repo ◌") {
+		t.Fatalf("stale marks wrong:\n%s", view)
+	}
+}
+
+func TestDetailViewShowsWarnings(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	m.width, m.height = 40, 10
+	m.viewport.Width, m.viewport.Height = 38, 4
+	m.warnings = []string{"GitHub からメタ情報を取得できませんでした"}
+	m.setDetailContent()
+	view := m.View()
+	if !strings.Contains(view, "メタ情報") {
+		t.Fatalf("warning not shown: %q", view)
+	}
+}
+
+func TestRelativeDay(t *testing.T) {
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"zero", time.Time{}, "不明"},
+		{"today", now, "今日"},
+		{"one day ago", now.Add(-24 * time.Hour), "1日前"},
+		{"five days ago", now.Add(-5 * 24 * time.Hour), "5日前"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := relativeDay(tt.t, now); got != tt.want {
+				t.Fatalf("relativeDay() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntryHasStaleAnalysis(t *testing.T) {
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	staleAnalysis := &core.Analysis{CreatedAt: now.Add(-5 * 24 * time.Hour)}
+	freshAnalysis := &core.Analysis{CreatedAt: now}
+	meta := &core.RepoMeta{UpdatedAt: now.Add(-1 * 24 * time.Hour)}
+	if !entryHasStaleAnalysis(&core.Entry{FullName: "a/b", RepoMeta: meta, Analyses: map[string]*core.Analysis{"ja": staleAnalysis}}) {
+		t.Fatal("stale analysis not detected")
+	}
+	if entryHasStaleAnalysis(&core.Entry{FullName: "a/b", RepoMeta: meta, Analyses: map[string]*core.Analysis{"ja": freshAnalysis}}) {
+		t.Fatal("fresh analysis flagged stale")
+	}
+	if entryHasStaleAnalysis(nil) || entryHasStaleAnalysis(&core.Entry{FullName: "a/b"}) {
+		t.Fatal("nil entry or nil analyses flagged stale")
 	}
 }

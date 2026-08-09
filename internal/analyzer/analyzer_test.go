@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,14 +38,26 @@ func (s *fakeStore) Upsert(e *core.Entry) error {
 }
 
 type fakeGitHub struct {
-	calls int
-	data  *clients.RepositoryData
-	err   error
+	calls      int
+	data       *clients.RepositoryData
+	err        error
+	metaCalls  int
+	meta       *core.RepoMeta
+	metaErr    error
+	metaCancel context.CancelFunc
 }
 
 func (f *fakeGitHub) FetchRepository(context.Context, string, string) (*clients.RepositoryData, error) {
 	f.calls++
 	return f.data, f.err
+}
+
+func (f *fakeGitHub) FetchRepositoryMeta(ctx context.Context, _, _ string) (*core.RepoMeta, error) {
+	f.metaCalls++
+	if f.metaCancel != nil {
+		f.metaCancel()
+	}
+	return f.meta, f.metaErr
 }
 
 type fakeAI struct {
@@ -61,11 +74,11 @@ func (f *fakeAI) Generate(_ context.Context, _ *core.RepoMeta, _, code, _ string
 }
 
 func newAnalyzer(s *fakeStore, gh *fakeGitHub, ai *fakeAI) *Analyzer {
-	return New(s, gh, map[string]clients.AIClient{"claude": ai}, func() time.Time { return time.Unix(99, 0) })
+	return New(s, gh, map[string]clients.AIClient{"claude": ai}, func() time.Time { return time.Unix(99, 0) }, time.Second)
 }
 
 func TestAnalyzeCacheHitDoesNotCallExternalServices(t *testing.T) {
-	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude"}}}
+	entry := &core.Entry{FullName: "owner/repo", RepoMeta: &core.RepoMeta{FetchedAt: time.Unix(99, 0)}, Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude"}}}
 	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
 	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
 	if err != nil {
@@ -74,8 +87,11 @@ func TestAnalyzeCacheHitDoesNotCallExternalServices(t *testing.T) {
 	if gh.calls != 0 || ai.calls != 0 || s.upsertCalls != 1 {
 		t.Fatalf("calls github=%d ai=%d upsert=%d", gh.calls, ai.calls, s.upsertCalls)
 	}
-	if got.ViewedAt != s.upserted[0].ViewedAt || !got.ViewedAt.Equal(time.Unix(99, 0)) {
-		t.Fatalf("ViewedAt not updated: %v", got.ViewedAt)
+	if got.Entry.ViewedAt != s.upserted[0].ViewedAt || !got.Entry.ViewedAt.Equal(time.Unix(99, 0)) {
+		t.Fatalf("ViewedAt not updated: %v", got.Entry.ViewedAt)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", got.Warnings)
 	}
 }
 
@@ -89,8 +105,11 @@ func TestAnalyzeCacheMissCallsGitHubThenAIThenStore(t *testing.T) {
 	if gh.calls != 1 || ai.calls != 1 || s.upsertCalls != 1 {
 		t.Fatalf("calls github=%d ai=%d upsert=%d", gh.calls, ai.calls, s.upsertCalls)
 	}
-	if got.Analyses["ja"] != ai.analysis || got.RepoMeta != meta {
-		t.Fatalf("unexpected entry: %#v", got)
+	if got.Entry.Analyses["ja"] != ai.analysis || got.Entry.RepoMeta != meta {
+		t.Fatalf("unexpected entry: %#v", got.Entry)
+	}
+	if !got.Entry.RepoMeta.FetchedAt.Equal(time.Unix(99, 0)) {
+		t.Fatalf("FetchedAt not set on full fetch: %v", got.Entry.RepoMeta.FetchedAt)
 	}
 }
 
@@ -103,8 +122,8 @@ func TestAnalyzeForceIgnoresCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
-	if gh.calls != 1 || ai.calls != 1 || got.Analyses["ja"].Summary != "new" {
-		t.Fatalf("force re-generation failed: %#v", got)
+	if gh.calls != 1 || ai.calls != 1 || got.Entry.Analyses["ja"].Summary != "new" {
+		t.Fatalf("force re-generation failed: %#v", got.Entry)
 	}
 }
 
@@ -141,14 +160,14 @@ func TestAnalyzePassesEmptyCodeWhenContextIsNil(t *testing.T) {
 }
 
 func TestAnalyzeCacheMatchesOnVersionProviderAndModel(t *testing.T) {
-	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {PromptVersion: 1, Provider: "claude", Model: "m"}}}
+	entry := &core.Entry{FullName: "owner/repo", RepoMeta: &core.RepoMeta{FetchedAt: time.Unix(99, 0)}, Analyses: map[string]*core.Analysis{"ja": {PromptVersion: 1, Provider: "claude", Model: "m"}}}
 	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
 	_, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
-	if gh.calls != 0 || ai.calls != 0 {
-		t.Fatalf("same version+provider+model must hit cache, calls github=%d ai=%d", gh.calls, ai.calls)
+	if gh.calls != 0 || ai.calls != 0 || gh.metaCalls != 0 {
+		t.Fatalf("same version+provider+model must hit cache, calls github=%d ai=%d meta=%d", gh.calls, ai.calls, gh.metaCalls)
 	}
 }
 
@@ -221,5 +240,159 @@ func assertSafe(t *testing.T, err error) {
 	t.Helper()
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("unsafe error: %v", err)
+	}
+}
+
+func cachedEntry(fetchedAt time.Time) *core.Entry {
+	return &core.Entry{
+		FullName: "owner/repo",
+		RepoMeta: &core.RepoMeta{FullName: "owner/repo", Description: "old", Stars: 1, UpdatedAt: time.Unix(10, 0), Languages: map[string]int{"Go": 100}, FetchedAt: fetchedAt},
+		Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude", CreatedAt: time.Unix(5, 0)}},
+	}
+}
+
+func TestAnalyzeRefreshNotNeededWhenWithinInterval(t *testing.T) {
+	entry := cachedEntry(time.Unix(99, 0))
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if gh.metaCalls != 0 {
+		t.Fatalf("meta refresh calls = %d, want 0 within interval", gh.metaCalls)
+	}
+	if got.Entry.RepoMeta.FetchedAt.Unix() != 99 {
+		t.Fatalf("FetchedAt changed without refresh: %v", got.Entry.RepoMeta.FetchedAt)
+	}
+	if !got.Entry.ViewedAt.Equal(time.Unix(99, 0)) {
+		t.Fatalf("ViewedAt not updated: %v", got.Entry.ViewedAt)
+	}
+}
+
+func TestAnalyzeRefreshFetchesMetaOnceWhenIntervalElapsed(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{meta: &core.RepoMeta{UpdatedAt: time.Unix(10, 0)}}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if gh.metaCalls != 1 {
+		t.Fatalf("meta refresh calls = %d, want 1", gh.metaCalls)
+	}
+	if gh.calls != 0 || ai.calls != 0 {
+		t.Fatalf("refresh must not re-fetch README/code or re-generate: github=%d ai=%d", gh.calls, ai.calls)
+	}
+	if !got.Entry.RepoMeta.FetchedAt.Equal(time.Unix(99, 0)) {
+		t.Fatalf("FetchedAt not updated after refresh: %v", got.Entry.RepoMeta.FetchedAt)
+	}
+	if got.Entry.Analyses["ja"].Summary != "cached" {
+		t.Fatalf("analysis was re-generated: %#v", got.Entry.Analyses["ja"])
+	}
+}
+
+func TestAnalyzeRefreshWhenFetchedAtZero(t *testing.T) {
+	entry := cachedEntry(time.Time{})
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{meta: &core.RepoMeta{UpdatedAt: time.Unix(10, 0)}}, &fakeAI{}
+	_, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if gh.metaCalls != 1 {
+		t.Fatalf("meta refresh calls = %d, want 1 for zero FetchedAt", gh.metaCalls)
+	}
+}
+
+func TestAnalyzeRefreshUpdatesScalarsAndKeepsLanguages(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	fresh := &core.RepoMeta{FullName: "owner/repo", Description: "new", Stars: 42, Forks: 7, Language: "Go", Topics: []string{"tui"}, URL: "https://github.com/owner/repo", License: "MIT", UpdatedAt: time.Unix(20, 0)}
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{meta: fresh}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	meta := got.Entry.RepoMeta
+	if meta.Description != "new" || meta.Stars != 42 || meta.Forks != 7 || !meta.UpdatedAt.Equal(time.Unix(20, 0)) || meta.License != "MIT" {
+		t.Fatalf("scalars not merged: %#v", meta)
+	}
+	if !reflect.DeepEqual(meta.Languages, map[string]int{"Go": 100}) {
+		t.Fatalf("Languages lost on merge: %#v", meta.Languages)
+	}
+}
+
+func TestAnalyzeRefreshSameUpdatedAtOnlyRenewsFetchedAt(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{meta: &core.RepoMeta{FullName: "owner/repo", Description: "different", UpdatedAt: time.Unix(10, 0)}}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if got.Entry.RepoMeta.Description != "old" {
+		t.Fatalf("scalars replaced despite same updated_at: %#v", got.Entry.RepoMeta)
+	}
+	if !got.Entry.RepoMeta.FetchedAt.Equal(time.Unix(99, 0)) {
+		t.Fatalf("FetchedAt not renewed: %v", got.Entry.RepoMeta.FetchedAt)
+	}
+}
+
+func TestAnalyzeRefreshFailureWarnsAndKeepsCache(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{metaErr: errors.New("boom")}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("refresh failure must not fail viewing: %v", err)
+	}
+	if got.Entry.Analyses["ja"].Summary != "cached" {
+		t.Fatalf("cached entry lost on refresh failure: %#v", got.Entry.Analyses["ja"])
+	}
+	if len(got.Warnings) == 0 {
+		t.Fatalf("refresh failure must add a warning")
+	}
+}
+
+func TestAnalyzeRefreshFailureMapsContextCancellationToError(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	gh := &fakeGitHub{metaCancel: cancel, metaErr: errors.New("canceled")}
+	s, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeAI{}
+	_, err := newAnalyzer(s, gh, ai).Analyze(ctx, "owner/repo", "ja", "claude", false)
+	if err == nil {
+		t.Fatal("cancellation during refresh must return an error")
+	}
+	if s.upsertCalls != 0 {
+		t.Fatalf("upsert after cancellation: %d", s.upsertCalls)
+	}
+}
+
+func TestNeedsRefresh(t *testing.T) {
+	now := time.Unix(99, 0)
+	if !needsRefresh(nil, now, time.Second) {
+		t.Fatal("nil meta must need refresh")
+	}
+	if !needsRefresh(&core.RepoMeta{}, now, time.Second) {
+		t.Fatal("zero FetchedAt must need refresh")
+	}
+	if needsRefresh(&core.RepoMeta{FetchedAt: time.Unix(99, 0)}, now, time.Second) {
+		t.Fatal("within interval must not need refresh")
+	}
+	if !needsRefresh(&core.RepoMeta{FetchedAt: time.Unix(98, 0)}, now, time.Second) {
+		t.Fatal("elapsed interval must need refresh")
+	}
+}
+
+func TestMergeMetaKeepsLanguagesAndFetchedAt(t *testing.T) {
+	old := &core.RepoMeta{FullName: "owner/repo", Description: "old", Languages: map[string]int{"Go": 1}, FetchedAt: time.Unix(1, 0)}
+	fresh := &core.RepoMeta{FullName: "owner/repo", Description: "new", Stars: 5, UpdatedAt: time.Unix(2, 0)}
+	merged := mergeMeta(old, fresh)
+	if merged.Description != "new" || merged.Stars != 5 {
+		t.Fatalf("scalars not merged: %#v", merged)
+	}
+	if !reflect.DeepEqual(merged.Languages, map[string]int{"Go": 1}) {
+		t.Fatalf("Languages not kept: %#v", merged.Languages)
+	}
+	if !merged.FetchedAt.Equal(time.Unix(1, 0)) {
+		t.Fatalf("FetchedAt not kept: %v", merged.FetchedAt)
+	}
+	if old.Description != "old" {
+		t.Fatal("mergeMeta mutated the source")
 	}
 }

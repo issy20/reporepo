@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/glamour"
@@ -76,7 +77,11 @@ func (m Model) viewInput() string {
 		if entry.IsFavorite {
 			favorite = favoriteStyle.Render(" ★")
 		}
-		line := cursor + safeText(entry.FullName) + favorite
+		stale := ""
+		if entryHasStaleAnalysis(entry) {
+			stale = " ◌"
+		}
+		line := cursor + safeText(entry.FullName) + stale + favorite
 		if i == m.selected {
 			line = selectedStyle.Render(line)
 		}
@@ -117,10 +122,18 @@ func (m Model) viewDetail() string {
 	if m.current == nil {
 		return fitLine("解析結果がありません", width) + "\n\n" + fitLine("Esc: 戻る", width)
 	}
-	return m.viewport.View() + "\n" + fitLine(dimStyle.Render("Esc: 戻る  ↑↓/PgUp/PgDn: スクロール  l: 言語  f: お気に入り  r: 再生成"), width)
+	var b strings.Builder
+	b.WriteString(m.viewport.View())
+	for _, warning := range m.warnings {
+		b.WriteByte('\n')
+		b.WriteString(fitLine(warningStyle.Render(safeText(warning)), width))
+	}
+	b.WriteByte('\n')
+	b.WriteString(fitLine(dimStyle.Render("Esc: 戻る  ↑↓/PgUp/PgDn: スクロール  l: 言語  f: お気に入り  r: 再生成"), width))
+	return b.String()
 }
 
-func detailMarkdown(entry *core.Entry, language string) string {
+func detailMarkdown(entry *core.Entry, language string, now time.Time) string {
 	if entry == nil {
 		return "解析結果がありません"
 	}
@@ -133,6 +146,14 @@ func detailMarkdown(entry *core.Entry, language string) string {
 	if a == nil {
 		b.WriteString("解析結果がありません")
 	} else {
+		fetched := "不明"
+		if entry.RepoMeta != nil && !entry.RepoMeta.FetchedAt.IsZero() {
+			fetched = relativeDay(entry.RepoMeta.FetchedAt, now)
+		}
+		fmt.Fprintf(&b, "取得: %s / 解析: %s\n\n", fetched, relativeDay(a.CreatedAt, now))
+		if a.IsStale(entry.RepoMeta) {
+			b.WriteString("> この解析はリポジトリの更新前のものです（`r` で再生成）\n\n")
+		}
 		keywords := make([]string, len(a.Keywords))
 		for i, keyword := range a.Keywords {
 			keywords[i] = safeText(keyword)
@@ -140,6 +161,34 @@ func detailMarkdown(entry *core.Entry, language string) string {
 		fmt.Fprintf(&b, "## Summary\n%s\n\n## Tech Stack\n%s\n\n## Background\n%s\n\n## Keywords\n%s", safeText(a.Summary), safeText(a.TechStack), safeText(a.Background), strings.Join(keywords, ", "))
 	}
 	return b.String()
+}
+
+// entryHasStaleAnalysis はエントリのいずれかの解析がリポジトリより古いかを返す。
+func entryHasStaleAnalysis(entry *core.Entry) bool {
+	if entry == nil {
+		return false
+	}
+	for _, analysis := range entry.Analyses {
+		if analysis != nil && analysis.IsStale(entry.RepoMeta) {
+			return true
+		}
+	}
+	return false
+}
+
+// relativeDay は現在との日数差を「今日」「N日前」等で返す。ゼロ値は「不明」。
+func relativeDay(t, now time.Time) string {
+	if t.IsZero() {
+		return "不明"
+	}
+	days := int(now.Sub(t).Hours() / 24)
+	if days < 0 {
+		days = 0
+	}
+	if days == 0 {
+		return "今日"
+	}
+	return fmt.Sprintf("%d日前", days)
 }
 
 func safeText(value string) string {
@@ -181,7 +230,11 @@ func (m *Model) resizeDetailContent() {
 }
 
 func (m *Model) renderDetailContent() {
-	plain := detailMarkdown(m.current, m.language)
+	now := time.Now()
+	if m.now != nil {
+		now = m.now()
+	}
+	plain := detailMarkdown(m.current, m.language, now)
 	content := plain
 	var err error
 	if m.renderer != nil {

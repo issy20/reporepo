@@ -37,4 +37,13 @@ type RepoMeta struct {
 	URL         string         `json:"url"`
 	License     string         `json:"license"`
 	UpdatedAt   time.Time      `json:"updated_at"`
+	FetchedAt   time.Time      `json:"fetched_at"` // 最後にGitHubから取得した日時
+}
+
+// IsStale は解析がリポジトリの最終更新より前のものかを返す。
+func (a *Analysis) IsStale(meta *RepoMeta) bool {
+	if a == nil || meta == nil {
+		return false
+	}
+	return a.CreatedAt.Before(meta.UpdatedAt)
 }

@@ -45,6 +45,8 @@ type fakeGitHub struct {
 	owner, repo string
 	cancel      context.CancelFunc
 	events      *[]string
+	meta        *core.RepoMeta
+	metaErr     error
 }
 
 func (f *fakeGitHub) FetchRepository(_ context.Context, owner, repo string) (*clients.RepositoryData, error) {
@@ -57,6 +59,10 @@ func (f *fakeGitHub) FetchRepository(_ context.Context, owner, repo string) (*cl
 		f.cancel()
 	}
 	return f.data, f.err
+}
+
+func (f *fakeGitHub) FetchRepositoryMeta(context.Context, string, string) (*core.RepoMeta, error) {
+	return f.meta, f.metaErr
 }
 
 type fakeAI struct {
@@ -130,9 +136,9 @@ func TestAnalyzeCancellationBeforeWorkSkipsDependencies(t *testing.T) {
 func TestAnalyzeUsesCacheAndUpdatesViewedAt(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "cached", PromptVersion: 1, Provider: "claude"}}}
 	s, gh, ai := &recordingStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
-	got, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", false)
-	if err != nil || got == entry || gh.calls != 0 || ai.calls != 0 || s.upsertCalls != 1 || !got.ViewedAt.Equal(time.Unix(99, 0)) || !entry.ViewedAt.IsZero() {
-		t.Fatalf("got=%#v err=%v calls=%d/%d/%d", got, err, gh.calls, ai.calls, s.upsertCalls)
+	result, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", false)
+	if err != nil || result == nil || result.Entry == entry || gh.calls != 0 || ai.calls != 0 || s.upsertCalls != 1 || !result.Entry.ViewedAt.Equal(time.Unix(99, 0)) || !entry.ViewedAt.IsZero() {
+		t.Fatalf("got=%#v err=%v calls=%d/%d/%d", result, err, gh.calls, ai.calls, s.upsertCalls)
 	}
 }
 
@@ -145,13 +151,13 @@ func TestAnalyzeCacheUpsertFailureDoesNotMutateLoadedEntry(t *testing.T) {
 	}
 	s := &recordingStore{entries: []*core.Entry{entry}, upsertErr: errors.New("save failed")}
 
-	got, err := commandModel(s, &fakeGitHub{}, &fakeAI{}).analyze(context.Background(), "owner/repo", false)
+	result, err := commandModel(s, &fakeGitHub{}, &fakeAI{}).analyze(context.Background(), "owner/repo", false)
 
 	if err == nil {
 		t.Fatal("want error")
 	}
-	if got != nil {
-		t.Fatalf("got=%#v, want nil", got)
+	if result != nil {
+		t.Fatalf("result=%#v, want nil", result)
 	}
 	if !entry.ViewedAt.Equal(originalViewedAt) {
 		t.Fatalf("loaded entry ViewedAt=%v, want %v", entry.ViewedAt, originalViewedAt)
@@ -164,10 +170,11 @@ func TestAnalyzeFetchesGeneratesAndPreservesExistingLanguage(t *testing.T) {
 	meta := &core.RepoMeta{FullName: "owner/repo"}
 	generated := &core.Analysis{Summary: "日本語"}
 	s, gh, ai := &recordingStore{entries: []*core.Entry{existing}}, &fakeGitHub{data: &clients.RepositoryData{Meta: meta, README: "readme"}}, &fakeAI{analysis: generated}
-	got, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", false)
+	result, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", false)
 	if err != nil || gh.calls != 1 || ai.calls != 1 || s.upsertCalls != 1 {
 		t.Fatalf("err=%v calls=%d/%d/%d", err, gh.calls, ai.calls, s.upsertCalls)
 	}
+	got := result.Entry
 	if got.Analyses["en"] != english || got.Analyses["ja"] != generated || !got.IsFavorite || !got.CreatedAt.Equal(time.Unix(1, 0)) {
 		t.Fatalf("existing data was lost: %#v", got)
 	}
@@ -198,8 +205,9 @@ func TestAnalyzeCreatesCompleteEntryAndFallsBackToInputFullName(t *testing.T) {
 	meta := &core.RepoMeta{}
 	analysis := &core.Analysis{Summary: "generated"}
 	s := &recordingStore{}
-	got, err := commandModel(s, &fakeGitHub{data: &clients.RepositoryData{Meta: meta}}, &fakeAI{analysis: analysis}).analyze(context.Background(), "Owner/Repo", false)
+	result, err := commandModel(s, &fakeGitHub{data: &clients.RepositoryData{Meta: meta}}, &fakeAI{analysis: analysis}).analyze(context.Background(), "Owner/Repo", false)
 	wantTime := time.Unix(99, 0)
+	got := result.Entry
 	if err != nil || got.FullName != "Owner/Repo" || got.RepoMeta != meta || got.Analyses["ja"] != analysis || !got.CreatedAt.Equal(wantTime) || !got.ViewedAt.Equal(wantTime) {
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
@@ -280,9 +288,9 @@ func TestAnalyzeForceIgnoresCache(t *testing.T) {
 	s := &recordingStore{entries: []*core.Entry{entry}}
 	gh := &fakeGitHub{data: &clients.RepositoryData{Meta: &core.RepoMeta{FullName: "owner/repo"}}}
 	ai := &fakeAI{analysis: &core.Analysis{Summary: "new"}}
-	got, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", true)
-	if err != nil || gh.calls != 1 || ai.calls != 1 || got.Analyses["ja"].Summary != "new" {
-		t.Fatalf("got=%#v err=%v", got, err)
+	result, err := commandModel(s, gh, ai).analyze(context.Background(), "owner/repo", true)
+	if err != nil || gh.calls != 1 || ai.calls != 1 || result.Entry.Analyses["ja"].Summary != "new" {
+		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }
 

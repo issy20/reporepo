@@ -9,4 +9,5 @@ var (
 	favoriteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	warningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )

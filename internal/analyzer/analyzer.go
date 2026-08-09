@@ -19,24 +19,37 @@ type Store interface {
 	Upsert(*core.Entry) error
 }
 
+// DefaultRefreshInterval はキャッシュしたメタ情報の既定鮮度維持間隔。
+const DefaultRefreshInterval = 7 * 24 * time.Hour
+
+// Result は解析の成果と閲覧を妨げない警告をまとめる。
+type Result struct {
+	Entry    *core.Entry
+	Warnings []string
+}
+
 // Analyzer はリポジトリ解析の共有パイプライン。
 type Analyzer struct {
-	store  Store
-	github clients.GitHubClient
-	ai     map[string]clients.AIClient
-	now    func() time.Time
+	store           Store
+	github          clients.GitHubClient
+	ai              map[string]clients.AIClient
+	now             func() time.Time
+	refreshInterval time.Duration
 }
 
 // New は Analyzer を構築する。
-func New(store Store, github clients.GitHubClient, ai map[string]clients.AIClient, now func() time.Time) *Analyzer {
+func New(store Store, github clients.GitHubClient, ai map[string]clients.AIClient, now func() time.Time, refreshInterval time.Duration) *Analyzer {
 	if now == nil {
 		now = time.Now
 	}
-	return &Analyzer{store: store, github: github, ai: ai, now: now}
+	if refreshInterval <= 0 {
+		refreshInterval = DefaultRefreshInterval
+	}
+	return &Analyzer{store: store, github: github, ai: ai, now: now, refreshInterval: refreshInterval}
 }
 
-// Analyze は入力から解析までを実行し、更新済みのエントリを返す。
-func (a *Analyzer) Analyze(ctx context.Context, input, language, provider string, force bool) (*core.Entry, error) {
+// Analyze は入力から解析までを実行し、更新済みのエントリと警告を返す。
+func (a *Analyzer) Analyze(ctx context.Context, input, language, provider string, force bool) (*Result, error) {
 	owner, repo, err := clients.ParseRepositoryInput(input)
 	if err != nil {
 		return nil, errors.New("リポジトリの入力形式が正しくありません")
@@ -54,15 +67,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input, language, provider string
 	fullName := owner + "/" + repo
 	existing := FindEntry(entries, fullName)
 	if !force && existing != nil && cacheMatches(existing.Analyses[language], provider, a.ai[provider]) {
-		if err := contextError(ctx); err != nil {
-			return nil, err
-		}
-		updated := CloneEntry(existing)
-		updated.ViewedAt = a.now()
-		if err := a.store.Upsert(updated); err != nil {
-			return nil, errors.New("履歴を保存できませんでした")
-		}
-		return updated, nil
+		return a.cacheHit(ctx, existing, owner, repo)
 	}
 	aiClient, ok := a.ai[provider]
 	if !ok || aiClient == nil {
@@ -108,6 +113,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input, language, provider string
 	if entry.Analyses == nil {
 		entry.Analyses = make(map[string]*core.Analysis)
 	}
+	data.Meta.FetchedAt = now
 	entry.RepoMeta = data.Meta
 	entry.Analyses[language] = analysis
 	entry.ViewedAt = now
@@ -117,7 +123,69 @@ func (a *Analyzer) Analyze(ctx context.Context, input, language, provider string
 	if err := a.store.Upsert(entry); err != nil {
 		return nil, errors.New("解析結果を保存できませんでした")
 	}
-	return entry, nil
+	return &Result{Entry: entry}, nil
+}
+
+// cacheHit は保存済み解析のキャッシュヒット経路。鮮度が切れていればメタ情報のみ再取得する。
+func (a *Analyzer) cacheHit(ctx context.Context, existing *core.Entry, owner, repo string) (*Result, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	now := a.now()
+	updated := CloneEntry(existing)
+	updated.ViewedAt = now
+	var warnings []string
+	if needsRefresh(updated.RepoMeta, now, a.refreshInterval) && a.github != nil {
+		fresh, err := a.github.FetchRepositoryMeta(ctx, owner, repo)
+		if err != nil {
+			if contextError(ctx) != nil {
+				return nil, errors.New("解析をキャンセルしました")
+			}
+			warnings = append(warnings, "GitHub からメタ情報を取得できませんでした")
+		} else if fresh != nil {
+			if updated.RepoMeta == nil {
+				updated.RepoMeta = fresh
+			} else if !fresh.UpdatedAt.Equal(updated.RepoMeta.UpdatedAt) {
+				updated.RepoMeta = mergeMeta(updated.RepoMeta, fresh)
+			}
+			updated.RepoMeta.FetchedAt = now
+		}
+	}
+	if err := a.store.Upsert(updated); err != nil {
+		return nil, errors.New("履歴を保存できませんでした")
+	}
+	return &Result{Entry: updated, Warnings: warnings}, nil
+}
+
+// needsRefresh はメタ情報の再取得が必要かを返す。FetchedAt ゼロ（旧データ）は要更新。
+func needsRefresh(m *core.RepoMeta, now time.Time, interval time.Duration) bool {
+	if m == nil || m.FetchedAt.IsZero() {
+		return true
+	}
+	return now.Sub(m.FetchedAt) >= interval
+}
+
+// mergeMeta は fresh のスカラー項目を old へ上書きし、Languages と FetchedAt を維持する。
+func mergeMeta(old, fresh *core.RepoMeta) *core.RepoMeta {
+	if old == nil {
+		return fresh
+	}
+	if fresh == nil {
+		return old
+	}
+	merged := *old
+	if fresh.FullName != "" {
+		merged.FullName = fresh.FullName
+	}
+	merged.Description = fresh.Description
+	merged.Stars = fresh.Stars
+	merged.Forks = fresh.Forks
+	merged.Language = fresh.Language
+	merged.Topics = fresh.Topics
+	merged.URL = fresh.URL
+	merged.License = fresh.License
+	merged.UpdatedAt = fresh.UpdatedAt
+	return &merged
 }
 
 func cacheMatches(analysis *core.Analysis, provider string, client clients.AIClient) bool {
