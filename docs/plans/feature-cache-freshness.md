@@ -1,6 +1,6 @@
 # Plan: キャッシュの鮮度管理（メタ情報の定期再取得と古い解析の表示）
 
-Status: draft
+Status: implemented
 
 ## 目的
 
@@ -129,44 +129,44 @@ func relativeDay(t, now time.Time) string
 
 ### A. データモデルと導出
 
-- [ ] `RepoMeta.FetchedAt` が marshal / unmarshal される
-- [ ] `CreatedAt < UpdatedAt` で `IsStale` が true
-- [ ] それ以外（同日以降・ゼロ UpdatedAt・nil）で false
-- [ ] 既存 JSON のゼロ FetchedAt が移行不要で読み込める
+- [x] `RepoMeta.FetchedAt` が marshal / unmarshal される
+- [x] `CreatedAt < UpdatedAt` で `IsStale` が true
+- [x] それ以外（同日以降・ゼロ UpdatedAt・nil）で false
+- [x] 既存 JSON のゼロ FetchedAt が移行不要で読み込める
 
 ### B. GitHubClient.FetchRepositoryMeta
 
-- [ ] `/repos/{owner}/{repo}` の1リクエストだけを送る
-- [ ] メタ情報（スター・説明・UpdatedAt 等）を返す
-- [ ] 404 / レート制限 / その他エラーを既存変換で返す
-- [ ] `Languages` が空（フル取得と混同しない）
+- [x] `/repos/{owner}/{repo}` の1リクエストだけを送る
+- [x] メタ情報（スター・説明・UpdatedAt 等）を返す
+- [x] 404 / レート制限 / その他エラーを既存変換で返す
+- [x] `Languages` が空（フル取得と混同しない）
 
 ### C. リフレッシュ判定とメタ更新
 
-- [ ] `refreshInterval` 未満なら再取得しない（閲覧日時のみ更新）
-- [ ] `refreshInterval` 以上なら1回だけ再取得する
-- [ ] `FetchedAt` ゼロ（旧データ）で再取得する
-- [ ] `updated_at` 変化でスカラー項目が更新され、`Languages` が維持される
-- [ ] `updated_at` 同一で `FetchedAt` のみ更新される
-- [ ] リフレッシュ時に AI・README・コードを取得しない
-- [ ] 自動再生成しない（解析結果を置き換えない）
-- [ ] リフレッシュ失敗で Warnings を返し、キャッシュを表示する（エラーにしない）
-- [ ] キャンセル時はエラー（従来どおり）
-- [ ] force 時はフル取得 + 再生成で `FetchedAt` を更新する（回帰）
+- [x] `refreshInterval` 未満なら再取得しない（閲覧日時のみ更新）
+- [x] `refreshInterval` 以上なら1回だけ再取得する
+- [x] `FetchedAt` ゼロ（旧データ）で再取得する
+- [x] `updated_at` 変化でスカラー項目が更新され、`Languages` が維持される
+- [x] `updated_at` 同一で `FetchedAt` のみ更新される
+- [x] リフレッシュ時に AI・README・コードを取得しない
+- [x] 自動再生成しない（解析結果を置き換えない）
+- [x] リフレッシュ失敗で Warnings を返し、キャッシュを表示する（エラーにしない）
+- [x] キャンセル時はエラー（従来どおり）
+- [x] force 時はフル取得 + 再生成で `FetchedAt` を更新する（回帰）
 
 ### D. 表示
 
-- [ ] 詳細ヘッダに「取得: X日前 / 解析: Y日前」を表示する
-- [ ] stale な解析に案内メッセージを表示する
-- [ ] 一覧で stale なエントリに `◌` を表示する
-- [ ] 一覧の表示で GitHub API を呼ばない
-- [ ] Warnings が入力画面または詳細画面に表示される
+- [x] 詳細ヘッダに「取得: X日前 / 解析: Y日前」を表示する
+- [x] stale な解析に案内メッセージを表示する
+- [x] 一覧で stale なエントリに `◌` を表示する
+- [x] 一覧の表示で GitHub API を呼ばない
+- [x] Warnings が入力画面または詳細画面に表示される
 
 ### E. 回帰
 
-- [ ] キャッシュヒット・ミス・force・キャンセルの既存テストが通る
-- [ ] エラーメッセージが secret を含まない
-- [ ] `go test ./...` / `go test -race ./...` / `go vet ./...` が成功する
+- [x] キャッシュヒット・ミス・force・キャンセルの既存テストが通る
+- [x] エラーメッセージが secret を含まない
+- [x] `go test ./...` / `go test -race ./...` / `go vet ./...` が成功する
 
 ## 実装順序
 

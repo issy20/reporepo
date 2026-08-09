@@ -200,7 +200,7 @@ a, b, c
 
 **出力形式（`--json`）。** リポジトリ（`repo` に RepoMeta）、解析（`summary` / `tech_stack` / `background` / `keywords`）、`language`、`provider`、`model`、`created_at` を含む単一 JSON オブジェクト。
 
-**アーキテクチャ（共有解析パイプライン）。** TUI の `Model.analyze` に埋まっている「キャッシュ確認 → GitHub 取得 → AI 生成 → 保存」を `internal/analyzer` パッケージへ抽出する。`Analyzer` はストア・GitHub クライアント・AI クライアント・`now`・`refreshInterval` を注入され、`Analyze(ctx, input, language, provider, force) (*core.Entry, error)` を提供する。TUI の `analyzeCmd` と CLI の `analyze` コマンドはどちらも同じ `Analyzer` を呼び、キャッシュ・鮮度・入力バージョンの挙動を単一実装に集約する。
+**アーキテクチャ（共有解析パイプライン）。** TUI の `Model.analyze` に埋まっている「キャッシュ確認 → GitHub 取得 → AI 生成 → 保存」を `internal/analyzer` パッケージへ抽出する。`Analyzer` はストア・GitHub クライアント・AI クライアント・`now`・`refreshInterval` を注入され、`Analyze(ctx, input, language, provider, force) (*Result, error)` を提供する。`Result` は更新済みエントリと閲覧を妨げない警告（リフレッシュ失敗等）を持つ。TUI の `analyzeCmd` と CLI の `analyze` コマンドはどちらも同じ `Analyzer` を呼び、キャッシュ・鮮度・入力バージョンの挙動を単一実装に集約する。
 
 ---
 
@@ -390,7 +390,7 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.1 完了
 
-データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー、CLIプレゼンテーション（TTY/plain切替、help、version、where、wizard、エラー所有権、stdout/stderr分離）、コード解析2.9（共有解析パイプライン `internal/analyzer` の抽出、ファイルツリー・選定・内容取得によるコード文脈のAI入力追加、`PromptVersion` による入力バージョン管理）。
+データ型、非secret設定の読み書き、OS資格情報ストア、旧形式設定の移行、JSONストア（同一repoを1行にまとめるロジック含む）、GitHubクライアント、Claude / OpenAI / Geminiクライアント、AI抽象とプロンプト構築、TUIのモデル・更新・描画・非同期コマンド・スタイル、Cobra CLI、設定ウィザード、CLI統合起動フロー、CLIプレゼンテーション（TTY/plain切替、help、version、where、wizard、エラー所有権、stdout/stderr分離）、コード解析2.9（共有解析パイプライン `internal/analyzer` の抽出、ファイルツリー・選定・内容取得によるコード文脈のAI入力追加、`PromptVersion` による入力バージョン管理）、キャッシュ鮮度管理2.10（`RepoMeta.FetchedAt` の追加、`Analysis.IsStale` による古さの導出、キャッシュヒット時の `refreshInterval` 基準メタ再取得と `Languages` 維持、リフレッシュ失敗時の警告表示、詳細ヘッダの取得/解析日時・stale案内・一覧の `◌` マーク）。
 
 ### 9.2 未完了 / 要対応
 
@@ -404,7 +404,7 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.3 仕様確定・未実装
 
-2.10 キャッシュの鮮度管理、2.11 analyzeコマンド。実装はTDD（テストリスト → 失敗するテスト → 実装 → リファクタ）で進め、既に抽出済みの共有解析パイプライン `internal/analyzer` の上に各機能を積み上げる。
+2.11 analyzeコマンド。実装はTDD（テストリスト → 失敗するテスト → 実装 → リファクタ）で進め、既に抽出済みの共有解析パイプライン `internal/analyzer` の上に積み上げる。
 
 ---
 

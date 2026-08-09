@@ -104,6 +104,89 @@ func TestClientFetchRepository(t *testing.T) {
 	}
 }
 
+func TestClientFetchRepositoryMeta(t *testing.T) {
+	seen := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.Path] = true
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			_, _ = w.Write([]byte(`{"full_name":"owner/repo","description":"desc","stargazers_count":42,"forks_count":7,"language":"Go","topics":["tui"],"html_url":"https://github.com/owner/repo","license":{"spdx_id":"MIT"},"updated_at":"2026-07-14T00:00:00Z"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	meta, err := client.FetchRepositoryMeta(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("FetchRepositoryMeta: %v", err)
+	}
+	if meta.FullName != "owner/repo" || meta.Stars != 42 || meta.Forks != 7 || meta.License != "MIT" || meta.Description != "desc" {
+		t.Fatalf("unexpected metadata: %#v", meta)
+	}
+	if !meta.UpdatedAt.Equal(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("UpdatedAt = %v", meta.UpdatedAt)
+	}
+	if len(meta.Languages) != 0 {
+		t.Fatalf("Languages = %#v, want empty for meta-only fetch", meta.Languages)
+	}
+	if len(seen) != 1 || !seen["/repos/owner/repo"] {
+		t.Fatalf("requested paths = %v, want only /repos/owner/repo", seen)
+	}
+}
+
+func TestClientFetchRepositoryMeta_InvalidInput(t *testing.T) {
+	client := NewGitHubClient(nil, "https://api.github.com", "")
+	for _, tc := range []struct{ owner, repo string }{
+		{"owner", "repo/extra"},
+		{"  owner", "repo"},
+		{"%2e%2e", "repo"},
+		{"owner", "repo\x00"},
+	} {
+		if _, err := client.FetchRepositoryMeta(context.Background(), tc.owner, tc.repo); err == nil {
+			t.Errorf("expected error for owner=%q repo=%q", tc.owner, tc.repo)
+		}
+	}
+}
+
+func TestClientFetchRepositoryMeta_ErrorClassification(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		headers    map[string]string
+		want       error
+		wantStatus int
+	}{
+		{name: "not found", status: http.StatusNotFound, want: ErrNotFound},
+		{name: "rate limited", status: http.StatusForbidden, headers: map[string]string{"X-RateLimit-Remaining": "0"}, want: ErrRateLimited},
+		{name: "server error", status: http.StatusInternalServerError, wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Set(key, value)
+				}
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+
+			client := NewGitHubClient(server.Client(), server.URL, "")
+			_, err := client.FetchRepositoryMeta(context.Background(), "owner", "repo")
+			if tt.want != nil && !errors.Is(err, tt.want) {
+				t.Fatalf("error = %v, want %v", err, tt.want)
+			}
+			if tt.wantStatus != 0 {
+				var httpErr *HTTPError
+				if !errors.As(err, &httpErr) || httpErr.StatusCode != tt.wantStatus {
+					t.Fatalf("error = %v, want HTTP status %d", err, tt.wantStatus)
+				}
+			}
+		})
+	}
+}
+
 func TestClientErrorClassification(t *testing.T) {
 	tests := []struct {
 		name       string

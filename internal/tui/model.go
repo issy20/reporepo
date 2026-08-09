@@ -59,6 +59,7 @@ type Model struct {
 	language     string
 	provider     string
 	errMessage   string
+	warnings     []string
 	loadingLabel string
 
 	store     entryStore
@@ -106,7 +107,7 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	layout := newLayout(80, 24)
 	input.Width = layout.inputWidth
 	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
-	m.analyzer = analyzer.New(deps.Store, deps.GitHub, deps.AI, now)
+	m.analyzer = analyzer.New(deps.Store, deps.GitHub, deps.AI, now, analyzer.DefaultRefreshInterval)
 	m.reloadEntries()
 	return m
 }
