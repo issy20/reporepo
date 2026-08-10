@@ -1,8 +1,8 @@
 # Reporepo 仕様書 兼 実装計画
 
-最終更新: 2026-08-09
+最終更新: 2026-08-10
 バージョン: 0.1.0 (開発中)
-ステータス: コア・TUI・CLI・CLIプレゼンテーション・OS資格情報ストア移行・コード解析（共有解析パイプライン・コード文脈取得・PromptVersion）実装完了 / キャッシュ鮮度・analyzeコマンドは仕様確定・未実装 / OS別手動スモークテスト未完了
+ステータス: コア・TUI・CLI・CLIプレゼンテーション・OS資格情報ストア移行・コード解析・キャッシュ鮮度管理・analyzeコマンド実装完了 / 疑似Trending一覧は仕様確定・未実装 / OS別手動スモークテスト未完了
 
 ---
 
@@ -14,7 +14,7 @@ Reporepo は、GitHub リポジトリ名（`owner/repo`）を入力すると、G
 
 このプロジェクトは当初「GitHub Trending を取得して AI でまとめる Web アプリ」として構想されたが、検討の結果、次の理由で形を変えている。
 
-GitHub には公式の Trending API が存在しない。スクレイピングや Search API による擬似 Trending は可能だが不安定・近似的である。そこで入力を `owner/repo` 文字列に限定し、確実に動く公式 REST API のみを使う方針とした。Trending は将来「入力のネタ探し」として後付けできる位置づけとした。
+GitHub には公式の Trending API が存在しない。スクレイピングや Search API による擬似 Trending は可能だが不安定・近似的である。そこで入力を `owner/repo` 文字列に限定し、確実に動く公式 REST API のみを使う方針とした。Trending は将来「入力のネタ探し」として後付けできる位置づけとしたが、製品主題である学習の入口として 2.12 で擬似 Trending 一覧を仕様確定した。
 
 配布形態は Web アプリではなく TUI を選んだ。理由は「認証なし・自前 API キー・生成結果の保存」という要件にある。Web アプリでサーバーを立てると、認証なしのエンドポイントは第三者に叩かれ、運営者の API キーが濫用される。TUI なら各ユーザーが自分の端末で自分のキーを使うため、この問題が構造的に消滅する。認証もサーバーも不要になる。
 
@@ -210,6 +210,27 @@ a, b, c
 
 **アーキテクチャ（共有解析パイプライン）。** TUI の `Model.analyze` に埋まっている「キャッシュ確認 → GitHub 取得 → AI 生成 → 保存」を `internal/analyzer` パッケージへ抽出する。`Analyzer` はストア・GitHub クライアント・AI クライアント・`now`・`refreshInterval` を注入され、`Analyze(ctx, input, language, provider, force) (*Result, error)` を提供する。`Result` は更新済みエントリと閲覧を妨げない警告（リフレッシュ失敗等）を持つ。TUI の `analyzeCmd` と CLI の `analyze` コマンドはどちらも同じ `Analyzer` を呼び、キャッシュ・鮮度・入力バージョンの挙動を単一実装に集約する。
 
+### 2.12 疑似Trending一覧（学びのネタ探し）
+
+製品の主題「リポジトリ単位の学習」の入口として、repo 名を知らなくても気になる repo に出会える導線を提供する。GitHub に公式の Trending API は存在しないため、Search API で「直近に作成され、スターが伸びた repo」の一覧を近似する。一覧から選んだ repo は既存の解析パイプライン（キャッシュ・鮮度・保存）へそのまま流せる。
+
+**クエリ設計。** `GET /search/repositories` を使用し、`created:` のウィンドウと `stars:` の下限で近似する。`fork:false` と `archived:false` は常時適用する。
+
+- ウィンドウ: `--since`（`today` / `week` / `month`、既定 `week`）
+- 品質下限: `--min-stars`（既定 `50`）
+- 言語絞り込み: `--language`（既定: 絞り込みなし）
+- 並び替え: `sort=stars`、`order=desc`
+
+**CLI（Phase 1）。** `reporepo trending` コマンドを追加し、一覧を plain text または `--json` で stdout へ出力する。1 repo を1行（repo名・スター数・説明・主要言語）で表示し、`reporepo analyze OWNER/REPO` へ渡すことで既存パイプラインで解析・保存できる。
+
+**TUI（Phase 2）。** 入力画面に `t` キーで Trending 一覧を表示する導線を追加する。一覧から Enter で選択すると既存の解析パイプラインへ流し込み、解析結果は履歴・お気に入りと同じ扱いになる。
+
+**近似の限界。** `created:` 条件により「直近作成」のみが対象で、長期存在 repo の急上昇は拾えない。スター数は総数であり velocity（期間内の増分）は直接測れない。Search API はインデックス更新に数分〜数時間の遅延がある。これらは「学びのネタ探し」として許容する近似であり、正確なトレンド指標ではない。
+
+**レート制限とキャッシュ。** Search API はトークン付き 30回/分、未認証 10回/分と厳しいため、取得した一覧は数時間キャッシュして同じ結果の再取得を避ける。403/429 は汎用エラーでなく、キャッシュ済み一覧の表示または時間をおいての再試行を案内する。
+
+**セキュリティ。** 検索結果の repo 名・説明は攻撃者制御データのため、`analyze` へ渡す前に既存の `ParseRepositoryInput` で owner/repo を検証し、一覧表示・AI 入力に使う説明文は `sanitizePromptContent` でサニタイズする。
+
 ---
 
 ## 3. 非機能要件
@@ -363,6 +384,8 @@ OS資格情報ストアの値をテストで実際に読み書きしてはなら
 
 コード解析（2.9）ではさらに `GET /repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1` でファイルツリー（各blobのpathとsize）を取得し、選定したファイルを `GET /repos/{owner}/{repo}/contents/{path}`（Accept: `application/vnd.github.raw`）で取得する。鮮度管理（2.10）では `GET /repos/{owner}/{repo}` だけでメタ情報を再取得する。解析1回あたりのGitHub APIリクエスト数は最大10回（メタ+言語+README+ツリー+最大6ファイル）。
 
+疑似Trending一覧（2.12）は `GET /search/repositories` で取得する。クエリは `created:>YYYY-MM-DD stars:>N fork:false archived:false` を基本とし、言語指定がある場合は `language:` を加え、`sort=stars&order=desc` で降順にする。Search API はレート制限（トークン付き30回/分、未認証10回/分）が厳しいため、取得した一覧は数時間キャッシュする。
+
 ### 6.2 AI
 
 3プロバイダとも system プロンプトで出力言語と JSON 形式を指定し、user プロンプトにリポジトリのメタ情報と切り詰めた README、コード文脈（2.9）を渡す。コード文脈は未選択・取得失敗時は省略される。出力はコードフェンスや前後テキストを除去してから最初の `{` から最後の `}` を抽出してパースする（モデルが余計な文字を付けても吸収するため）。OpenAI は `response_format: json_object` も併用する。生成結果には入力バージョン `PromptVersion` を記録する。
@@ -385,7 +408,7 @@ OS資格情報ストアの値をテストで実際に読み書きしてはなら
 
 ## 7. キー操作仕様
 
-入力画面では、Enter で解析またはリスト選択を開く、上下キーでリスト選択、tab で履歴⇄お気に入り、f でお気に入りトグル、d で削除、l で言語切替、p で AI 切替、q/esc で終了。詳細画面では、上下/PgUp/PgDn でスクロール、l で言語切替（必要なら再生成）、f でお気に入り、r で強制再生成、esc で戻る。
+入力画面では、Enter で解析またはリスト選択を開く、上下キーでリスト選択、tab で履歴⇄お気に入り、f でお気に入りトグル、d で削除、l で言語切替、p で AI 切替、t で疑似Trending一覧（2.12）を表示、q/esc で終了。詳細画面では、上下/PgUp/PgDn でスクロール、l で言語切替（必要なら再生成）、f でお気に入り、r で強制再生成、esc で戻る。
 
 ---
 
@@ -413,13 +436,13 @@ Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の�
 
 ### 9.3 仕様確定・未実装
 
-なし（2.11 analyzeコマンドは 9.1 で完了）。
+2.12 疑似Trending一覧。実装はTDD（テストリスト → 失敗するテスト → 実装 → リファクタ）で進め、まず CLI `reporepo trending`（Phase 1）を Search API クライアントとキャッシュ付きで実装し、次に TUI の `t` キー導線（Phase 2）を積み上げる。
 
 ---
 
 ## 10. 今後の拡張余地
 
-擬似 Trending 一覧（GitHub Search API で「直近作成 × 高スター」を取得し、選択して詳細解説へ遷移）を追加できる。入力を `owner/repo` 文字列に抽象化済みのため、入力元がフォームでも一覧でも同じ処理に流せる。その他、全文検索、Markdown ノートのエクスポート、ローカル LLM 対応、キーワードからの関連リポジトリ推薦などが考えられる。`analyze` コマンドは複数引数・stdin からの一括解析へ拡張でき、`refreshInterval`（2.10）やコード解析の対象ファイル（2.9）は設定化の余地がある。
+入力を `owner/repo` 文字列に抽象化済みのため、入力元を一覧やフォームに広げても同じ解析パイプラインへ流せる（疑似Trending一覧は 2.12 で仕様確定済み）。その他、全文検索、Markdown ノートのエクスポート、ローカル LLM 対応、キーワードからの関連リポジトリ推薦などが考えられる。`analyze` コマンドは複数引数・stdin からの一括解析へ拡張でき、`refreshInterval`（2.10）やコード解析の対象ファイル（2.9）は設定化の余地がある。
 
 ---
 
