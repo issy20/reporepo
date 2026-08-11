@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/issy20/reporepo/internal/clients"
+	"github.com/issy20/reporepo/internal/trendingcache"
 	"github.com/spf13/cobra"
 )
 
@@ -59,17 +60,17 @@ func runTrending(deps commandDependencies, since, language string, minStars int,
 		return err
 	}
 	query := clients.TrendingQuery{CreatedAfter: createdAfter, MinStars: minStars, Language: language}
-	key := trendingCacheKey(since, minStars, language)
-	cachePath := trendingCachePath(rt.dataPath)
+	key := trendingcache.Key(since, minStars, language)
+	cachePath := trendingcache.Path(rt.dataPath)
 
-	cache := loadTrendingCache(cachePath)
-	if repos, ok := cache.fresh(key, nowValue, DefaultTrendingCacheTTL); ok {
+	cache := trendingcache.Load(cachePath)
+	if repos, ok := cache.Fresh(key, nowValue, trendingcache.DefaultTTL); ok {
 		return writeTrendingOutput(out, repos, jsonOutput)
 	}
 
 	repos, err := rt.github.SearchTrending(context.Background(), query)
 	if errors.Is(err, clients.ErrTrendingRateLimited) {
-		if repos, ok := cache.any(key); ok {
+		if repos, ok := cache.Any(key); ok {
 			fmt.Fprintln(errOut, "警告: GitHub Search API のレート制限に達しました。キャッシュ済みの一覧を表示します。時間をおいて再実行してください")
 			return writeTrendingOutput(out, repos, jsonOutput)
 		}
@@ -78,8 +79,8 @@ func runTrending(deps commandDependencies, since, language string, minStars int,
 	if err != nil {
 		return errors.New("GitHub のトレンド一覧を取得できませんでした")
 	}
-	cache.set(key, repos, nowValue)
-	if err := saveTrendingCache(cachePath, cache); err != nil {
+	cache.Set(key, repos, nowValue)
+	if err := trendingcache.Save(cachePath, cache); err != nil {
 		fmt.Fprintln(errOut, "警告: トレンド一覧のキャッシュを保存できませんでした")
 	}
 	return writeTrendingOutput(out, repos, jsonOutput)

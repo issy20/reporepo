@@ -15,7 +15,14 @@ import (
 	"github.com/issy20/reporepo/internal/clients"
 	"github.com/issy20/reporepo/internal/core"
 	"github.com/issy20/reporepo/internal/testutil"
+	"github.com/issy20/reporepo/internal/trendingcache"
 )
+
+func testRepos() []clients.TrendingRepo {
+	return []clients.TrendingRepo{
+		{FullName: "owner/repo", Description: "desc", Stars: 123, Language: "Go"},
+	}
+}
 
 type trendingRecordingGitHub struct {
 	calls int
@@ -205,7 +212,7 @@ func TestTrendingExpiredCacheRefetches(t *testing.T) {
 	if _, _, err := runTrendingNow(t, deps, "week", "", 50, false, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runTrendingNow(t, deps, "week", "", 50, false, now.Add(DefaultTrendingCacheTTL+time.Hour)); err != nil {
+	if _, _, err := runTrendingNow(t, deps, "week", "", 50, false, now.Add(trendingcache.DefaultTTL+time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if gh.calls != 2 {
@@ -221,7 +228,7 @@ func TestTrendingRateLimitFallbackShowsStaleCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	gh.err = clients.ErrTrendingRateLimited
-	out, errOut, err := runTrendingNow(t, deps, "week", "", 50, false, now.Add(DefaultTrendingCacheTTL+time.Hour))
+	out, errOut, err := runTrendingNow(t, deps, "week", "", 50, false, now.Add(trendingcache.DefaultTTL+time.Hour))
 	if err != nil {
 		t.Fatalf("trending error = %v, want fallback success", err)
 	}

@@ -34,6 +34,8 @@ func (m Model) View() string {
 		return m.viewLoading()
 	case stateDetail:
 		return m.viewDetail()
+	case stateTrending:
+		return m.viewTrending()
 	default:
 		return m.viewInput()
 	}
@@ -115,6 +117,57 @@ func (m Model) viewLoading() string {
 	}
 	width := newLayout(m.width, m.height).width
 	return fmt.Sprintf("%s\n\n%s", fitLine(m.spinner.View()+" "+label, width), fitLine(dimStyle.Render("Esc: キャンセル"), width))
+}
+
+func (m Model) viewTrending() string {
+	width := newLayout(m.width, m.height).width
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Trending"))
+	b.WriteString("\n\n")
+	if m.trendingLoading {
+		b.WriteString(fitLine(m.spinner.View()+" 取得しています…", width))
+		b.WriteString("\n")
+		b.WriteString(fitLine(dimStyle.Render("Esc: キャンセル"), width))
+		return b.String()
+	}
+	if len(m.trendingRepos) == 0 {
+		b.WriteString(dimStyle.Render("  該当するリポジトリはありません"))
+		b.WriteByte('\n')
+	}
+	historyHeight := newLayout(m.width, m.height).historyHeight
+	start, end := visibleRange(len(m.trendingRepos), m.trendingSelected, historyHeight)
+	for i := start; i < end; i++ {
+		repo := m.trendingRepos[i]
+		if repo.FullName == "" {
+			continue
+		}
+		cursor := "  "
+		if i == m.trendingSelected {
+			cursor = "> "
+		}
+		line := cursor + safeText(repo.FullName) + fmt.Sprintf(" ⭐ %d", repo.Stars)
+		if repo.Description != "" {
+			line += "  " + safeText(repo.Description)
+		}
+		if repo.Language != "" {
+			line += "  " + safeText(repo.Language)
+		}
+		if i == m.trendingSelected {
+			line = selectedStyle.Render(line)
+		}
+		b.WriteString(fitLine(line, width))
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n")
+	b.WriteString(fitLine(dimStyle.Render("Enter: 開く  ↑↓: 選択  t: 再取得  Esc: 戻る"), width))
+	if m.trendingStale {
+		b.WriteString("\n")
+		b.WriteString(fitLine(warningStyle.Render(safeText(m.trendingErr)), width))
+	} else if m.trendingErr != "" {
+		b.WriteString("\n\n")
+		b.WriteString(fitLine(errorStyle.Render(safeText(m.trendingErr)), width))
+	}
+	return b.String()
 }
 
 func (m Model) viewDetail() string {

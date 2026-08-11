@@ -2,10 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/issy20/reporepo/internal/analyzer"
+	"github.com/issy20/reporepo/internal/clients"
 	"github.com/issy20/reporepo/internal/core"
+	"github.com/issy20/reporepo/internal/trendingcache"
 )
 
 type analysisSucceededMsg struct {
@@ -17,6 +20,18 @@ type analysisFailedMsg struct {
 	requestID uint64
 	err       error
 }
+
+type trendingLoadedMsg struct {
+	requestID uint64
+	repos     []clients.TrendingRepo
+	stale     bool
+}
+type trendingFailedMsg struct {
+	requestID uint64
+	err       error
+}
+
+var errTrendingFetch = errors.New("Trending 一覧を取得できませんでした")
 
 type entryMutationKind uint8
 
@@ -44,4 +59,36 @@ func (m Model) analyzeCmd(ctx context.Context, input string, force bool, request
 
 func (m Model) analyze(ctx context.Context, input string, force bool) (*analyzer.Result, error) {
 	return m.analyzer.Analyze(ctx, input, m.language, m.provider, force)
+}
+
+// trendingCmd は疑似Trending一覧をキャッシュ確認 → 取得 → 保存の順で非同期実行する。
+func (m Model) trendingCmd(requestID uint64) tea.Cmd {
+	return func() tea.Msg {
+		now := m.now()
+		key := trendingcache.Key("week", 50, "")
+		if m.trendingCachePath != "" {
+			cache := trendingcache.Load(m.trendingCachePath)
+			if repos, ok := cache.Fresh(key, now, trendingcache.DefaultTTL); ok {
+				return trendingLoadedMsg{requestID: requestID, repos: repos}
+			}
+		}
+		repos, err := m.github.SearchTrending(context.Background(), clients.TrendingQuery{CreatedAfter: now.AddDate(0, 0, -7), MinStars: 50})
+		if errors.Is(err, clients.ErrTrendingRateLimited) {
+			if m.trendingCachePath != "" {
+				if repos, ok := trendingcache.Load(m.trendingCachePath).Any(key); ok {
+					return trendingLoadedMsg{requestID: requestID, repos: repos, stale: true}
+				}
+			}
+			return trendingFailedMsg{requestID: requestID, err: errors.New("GitHub Search API のレート制限に達しました。時間をおいて再実行してください")}
+		}
+		if err != nil {
+			return trendingFailedMsg{requestID: requestID, err: errTrendingFetch}
+		}
+		if m.trendingCachePath != "" {
+			cache := trendingcache.Load(m.trendingCachePath)
+			cache.Set(key, repos, now)
+			_ = trendingcache.Save(m.trendingCachePath, cache)
+		}
+		return trendingLoadedMsg{requestID: requestID, repos: repos}
+	}
 }

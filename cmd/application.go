@@ -13,6 +13,7 @@ import (
 	"github.com/issy20/reporepo/internal/core"
 	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/issy20/reporepo/internal/store"
+	"github.com/issy20/reporepo/internal/trendingcache"
 	"github.com/issy20/reporepo/internal/tui"
 )
 
@@ -192,10 +193,11 @@ func runApplicationWith(deps applicationDependencies) error {
 		return errors.New("TUIを起動できませんでした")
 	}
 	tuiDeps := tui.Dependencies{
-		Store:  rt.store,
-		GitHub: rt.github,
-		AI:     rt.ai,
-		Now:    time.Now,
+		Store:             rt.store,
+		GitHub:            rt.github,
+		AI:                rt.ai,
+		Now:               time.Now,
+		TrendingCachePath: trendingcache.Path(rt.dataPath),
 	}
 	if err := deps.runTUI(tuiDeps, rt.cfg); err != nil {
 		return errors.New("TUIを起動できませんでした")

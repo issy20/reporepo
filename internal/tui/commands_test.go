@@ -39,14 +39,18 @@ func (s *recordingStore) Upsert(e *core.Entry) error {
 }
 
 type fakeGitHub struct {
-	calls       int
-	data        *clients.RepositoryData
-	err         error
-	owner, repo string
-	cancel      context.CancelFunc
-	events      *[]string
-	meta        *core.RepoMeta
-	metaErr     error
+	calls           int
+	data            *clients.RepositoryData
+	err             error
+	owner, repo     string
+	cancel          context.CancelFunc
+	events          *[]string
+	meta            *core.RepoMeta
+	metaErr         error
+	trending        []clients.TrendingRepo
+	trendingErr     error
+	trendingCalls   int
+	trendingQueries []clients.TrendingQuery
 }
 
 func (f *fakeGitHub) FetchRepository(_ context.Context, owner, repo string) (*clients.RepositoryData, error) {
@@ -65,8 +69,13 @@ func (f *fakeGitHub) FetchRepositoryMeta(context.Context, string, string) (*core
 	return f.meta, f.metaErr
 }
 
-func (f *fakeGitHub) SearchTrending(context.Context, clients.TrendingQuery) ([]clients.TrendingRepo, error) {
-	return nil, nil
+func (f *fakeGitHub) SearchTrending(_ context.Context, q clients.TrendingQuery) ([]clients.TrendingRepo, error) {
+	f.trendingCalls++
+	f.trendingQueries = append(f.trendingQueries, q)
+	if f.trendingErr != nil {
+		return nil, f.trendingErr
+	}
+	return f.trending, nil
 }
 
 type fakeAI struct {
