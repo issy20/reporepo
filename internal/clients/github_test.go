@@ -455,3 +455,131 @@ func TestNewGitHubClient_NilClient(t *testing.T) {
 		t.Errorf("expected httpClient to be defaulted, but got nil")
 	}
 }
+
+func TestClientSearchTrendingBuildsQuery(t *testing.T) {
+	createdAfter := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search/repositories" {
+			t.Errorf("path = %q, want /search/repositories", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if got := q.Get("q"); got != "created:>2026-08-03 stars:>50 fork:false archived:false language:Go" {
+			t.Errorf("q = %q", got)
+		}
+		if got := q.Get("sort"); got != "stars" {
+			t.Errorf("sort = %q", got)
+		}
+		if got := q.Get("order"); got != "desc" {
+			t.Errorf("order = %q", got)
+		}
+		if got := q.Get("per_page"); got != "30" {
+			t.Errorf("per_page = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"full_name":"owner/repo","description":"desc","stargazers_count":123,"language":"Go"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	repos, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: createdAfter, MinStars: 50, Language: "Go", Limit: 30})
+	if err != nil {
+		t.Fatalf("SearchTrending: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("repos = %#v, want 1 item", repos)
+	}
+	if repos[0].FullName != "owner/repo" || repos[0].Description != "desc" || repos[0].Stars != 123 || repos[0].Language != "Go" {
+		t.Fatalf("repos[0] = %#v", repos[0])
+	}
+}
+
+func TestClientSearchTrendingBuildsQueryWithoutLanguage(t *testing.T) {
+	createdAfter := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if got := q.Get("q"); got != "created:>2026-08-03 stars:>50 fork:false archived:false" {
+			t.Errorf("q = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	repos, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: createdAfter, MinStars: 50})
+	if err != nil {
+		t.Fatalf("SearchTrending: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("repos = %#v, want empty slice", repos)
+	}
+}
+
+func TestClientSearchTrendingDefaultLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("per_page"); got != "30" {
+			t.Errorf("per_page = %q, want default 30", got)
+		}
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	if _, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: time.Now(), MinStars: 50}); err != nil {
+		t.Fatalf("SearchTrending: %v", err)
+	}
+}
+
+func TestClientSearchTrendingRateLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		headers map[string]string
+	}{
+		{name: "403 remaining zero", status: http.StatusForbidden, headers: map[string]string{"X-RateLimit-Remaining": "0"}},
+		{name: "429", status: http.StatusTooManyRequests},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Set(key, value)
+				}
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+
+			client := NewGitHubClient(server.Client(), server.URL, "")
+			_, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: time.Now(), MinStars: 50})
+			if !errors.Is(err, ErrTrendingRateLimited) {
+				t.Fatalf("error = %v, want ErrTrendingRateLimited", err)
+			}
+		})
+	}
+}
+
+func TestClientSearchTrendingOtherErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	_, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: time.Now(), MinStars: 50})
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("error = %v, want HTTP status %d", err, http.StatusInternalServerError)
+	}
+}
+
+func TestClientSearchTrendingLimitsResponseBody(t *testing.T) {
+	large := `{"total_count":1,"items":[{"full_name":"owner/repo","description":"` + strings.Repeat("A", maxTrendingResponseBytes+1024) + `","stargazers_count":123,"language":"Go"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(large))
+	}))
+	defer server.Close()
+
+	client := NewGitHubClient(server.Client(), server.URL, "")
+	_, err := client.SearchTrending(context.Background(), TrendingQuery{CreatedAfter: time.Now(), MinStars: 50})
+	if err == nil {
+		t.Fatal("SearchTrending() error = nil, want truncated body error")
+	}
+}

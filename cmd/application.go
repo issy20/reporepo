@@ -75,15 +75,16 @@ func defaultApplicationDependencies() applicationDependencies {
 	}
 }
 
-// runtime は run と analyze が共有する実行時オブジェクト群。
+// runtime は run と analyze、trending が共有する実行時オブジェクト群。
 type runtime struct {
-	cfg    *core.Config
-	github clients.GitHubClient
-	ai     map[string]clients.AIClient
-	store  *store.Store
+	cfg      *core.Config
+	github   clients.GitHubClient
+	ai       map[string]clients.AIClient
+	store    *store.Store
+	dataPath string
 }
 
-func buildRuntime(deps applicationDependencies, warn func(string)) (*runtime, error) {
+func buildRuntime(deps applicationDependencies, warn func(string), requireAI bool) (*runtime, error) {
 	defaults := defaultApplicationDependencies()
 	if warn == nil {
 		warn = defaults.warn
@@ -133,7 +134,7 @@ func buildRuntime(deps applicationDependencies, warn func(string)) (*runtime, er
 		return nil, errors.New("設定を読み込めませんでした")
 	}
 
-	runtimeConfig, warnings, err := resolveRuntimeSecrets(cfg, deps.secretStore)
+	runtimeConfig, warnings, err := resolveRuntimeSecrets(cfg, deps.secretStore, requireAI)
 	for _, warning := range warnings {
 		warn(warning)
 	}
@@ -145,9 +146,6 @@ func buildRuntime(deps applicationDependencies, warn func(string)) (*runtime, er
 			runtimeConfig.GithubToken = strings.TrimSpace(token)
 		}
 	}
-	hasClaude := runtimeConfig.AnthropicAPIKey != ""
-	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
-	hasGemini := runtimeConfig.GeminiAPIKey != ""
 
 	path, err := deps.dataPath()
 	if err != nil {
@@ -155,30 +153,38 @@ func buildRuntime(deps applicationDependencies, warn func(string)) (*runtime, er
 	}
 
 	httpClient := deps.newHTTP()
-	ai := make(map[string]clients.AIClient, 3)
+	rt := &runtime{
+		cfg:      runtimeConfig,
+		github:   deps.newGitHub(httpClient, githubAPIURL, runtimeConfig.GithubToken),
+		ai:       make(map[string]clients.AIClient, 3),
+		store:    deps.newStore(path),
+		dataPath: path,
+	}
+	if !requireAI {
+		return rt, nil
+	}
+
+	hasClaude := runtimeConfig.AnthropicAPIKey != ""
+	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
+	hasGemini := runtimeConfig.GeminiAPIKey != ""
 	if hasClaude {
-		ai["claude"] = deps.newClaude(runtimeConfig.AnthropicAPIKey, defaultClaudeModel, httpClient)
+		rt.ai["claude"] = deps.newClaude(runtimeConfig.AnthropicAPIKey, defaultClaudeModel, httpClient)
 	}
 	if hasOpenAI {
-		ai["openai"] = deps.newOpenAI(runtimeConfig.OpenAIAPIKey, defaultOpenAIModel, httpClient)
+		rt.ai["openai"] = deps.newOpenAI(runtimeConfig.OpenAIAPIKey, defaultOpenAIModel, httpClient)
 	}
 	if hasGemini {
 		geminiClient, err := deps.newGemini(runtimeConfig.GeminiAPIKey, defaultGeminiModel)
 		if err != nil {
 			return nil, errors.New("Gemini clientを初期化できませんでした")
 		}
-		ai["gemini"] = geminiClient
+		rt.ai["gemini"] = geminiClient
 	}
-	return &runtime{
-		cfg:    runtimeConfig,
-		github: deps.newGitHub(httpClient, githubAPIURL, runtimeConfig.GithubToken),
-		ai:     ai,
-		store:  deps.newStore(path),
-	}, nil
+	return rt, nil
 }
 
 func runApplicationWith(deps applicationDependencies) error {
-	rt, err := buildRuntime(deps, deps.warn)
+	rt, err := buildRuntime(deps, deps.warn, true)
 	if err != nil {
 		return err
 	}

@@ -65,6 +65,10 @@ func (f *fakeGitHub) FetchRepositoryMeta(context.Context, string, string) (*core
 	return f.meta, f.metaErr
 }
 
+func (f *fakeGitHub) SearchTrending(context.Context, clients.TrendingQuery) ([]clients.TrendingRepo, error) {
+	return nil, nil
+}
+
 type fakeAI struct {
 	calls    int
 	analysis *core.Analysis

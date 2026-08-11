@@ -18,7 +18,9 @@ const (
 	geminiAPIKeyEnv    = "GEMINI_API_KEY"
 )
 
-func resolveRuntimeSecrets(cfg *core.Config, store secretstore.Store) (*core.Config, []string, error) {
+// resolveRuntimeSecrets は環境変数・OS資格情報ストアから secret を解決する。requireAI が false のときは
+// AI キー未設定エラーと provider フォールバックをスキップする（GitHub token のみで動作するコマンド用）。
+func resolveRuntimeSecrets(cfg *core.Config, store secretstore.Store, requireAI bool) (*core.Config, []string, error) {
 	runtimeConfig := *cfg
 	warnings := make([]string, 0, 4)
 
@@ -26,6 +28,10 @@ func resolveRuntimeSecrets(cfg *core.Config, store secretstore.Store) (*core.Con
 	runtimeConfig.AnthropicAPIKey = resolveSecret(anthropicAPIKeyEnv, secretstore.AnthropicAPIKey, store, "Anthropic API key", &warnings)
 	runtimeConfig.OpenAIAPIKey = resolveSecret(openAIAPIKeyEnv, secretstore.OpenAIAPIKey, store, "OpenAI API key", &warnings)
 	runtimeConfig.GeminiAPIKey = resolveSecret(geminiAPIKeyEnv, secretstore.GeminiAPIKey, store, "Gemini API key", &warnings)
+
+	if !requireAI {
+		return &runtimeConfig, warnings, nil
+	}
 
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""

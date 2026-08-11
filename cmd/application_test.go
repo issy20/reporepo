@@ -23,8 +23,11 @@ func (stubAIClient) Generate(context.Context, *core.RepoMeta, string, string, st
 }
 
 type stubGitHubClient struct {
-	meta *core.RepoMeta
-	err  error
+	meta          *core.RepoMeta
+	err           error
+	trending      []clients.TrendingRepo
+	trendingErr   error
+	trendingQuery *clients.TrendingQuery
 }
 
 func (s stubGitHubClient) FetchRepository(_ context.Context, _, _ string) (*clients.RepositoryData, error) {
@@ -39,6 +42,16 @@ func (s stubGitHubClient) FetchRepositoryMeta(_ context.Context, _, _ string) (*
 		return nil, s.err
 	}
 	return s.meta, nil
+}
+
+func (s stubGitHubClient) SearchTrending(_ context.Context, q clients.TrendingQuery) ([]clients.TrendingRepo, error) {
+	if s.trendingQuery != nil {
+		*s.trendingQuery = q
+	}
+	if s.trendingErr != nil {
+		return nil, s.trendingErr
+	}
+	return s.trending, nil
 }
 
 func TestRunApplicationUsesGeminiAsOnlyAvailableProvider(t *testing.T) {
@@ -238,7 +251,7 @@ func TestBuildRuntimeFallsBackToGHTokenWhenUnset(t *testing.T) {
 			return nil
 		},
 		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -271,7 +284,7 @@ func TestBuildRuntimeGHTokenIsTrimmed(t *testing.T) {
 			return nil
 		},
 		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -302,7 +315,7 @@ func TestBuildRuntimeGHTokenNotCalledWhenEnvSet(t *testing.T) {
 			return nil
 		},
 		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -337,7 +350,7 @@ func TestBuildRuntimeGHTokenNotCalledWhenStored(t *testing.T) {
 			return nil
 		},
 		newClaude: func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -361,7 +374,7 @@ func TestBuildRuntimeGHTokenFailureIsUnset(t *testing.T) {
 		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
 		ghAuthToken: func() (string, error) { return "", errors.New("gh unavailable") },
 		newClaude:   func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v, want success with unset GitHub token", err)
 	}
@@ -383,7 +396,7 @@ func TestBuildRuntimeGHTokenNotPersisted(t *testing.T) {
 		dataPath:    func() (string, error) { return filepath.Join(t.TempDir(), "data.json"), nil },
 		ghAuthToken: func() (string, error) { return "gh-token", nil },
 		newClaude:   func(string, string, *http.Client) clients.AIClient { return stubAIClient{} },
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -413,7 +426,7 @@ func TestBuildRuntimeGHTokenDoesNotSatisfyAIKeys(t *testing.T) {
 			ghCalls++
 			return "gh-token", nil
 		},
-	}, nil)
+	}, nil, true)
 	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 		t.Fatalf("error = %v, want AI key guidance", err)
 	}
@@ -678,7 +691,7 @@ func TestBuildRuntimeBuildsSameClientsAsRun(t *testing.T) {
 			}
 			return stubAIClient{}
 		},
-	}, nil)
+	}, nil, true)
 	if err != nil {
 		t.Fatalf("buildRuntime() error = %v", err)
 	}
@@ -698,7 +711,7 @@ func TestBuildRuntimeBuildsSameClientsAsRun(t *testing.T) {
 
 func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 	t.Run("config load", func(t *testing.T) {
-		_, err := buildRuntime(applicationDependencies{loadConfig: func() (*core.Config, error) { return nil, errors.New("secret") }}, nil)
+		_, err := buildRuntime(applicationDependencies{loadConfig: func() (*core.Config, error) { return nil, errors.New("secret") }}, nil, true)
 		if err == nil || err.Error() != "設定を読み込めませんでした" || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("error = %v", err)
 		}
@@ -707,7 +720,7 @@ func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 		_, err := buildRuntime(applicationDependencies{
 			loadConfig:  func() (*core.Config, error) { return &core.Config{}, nil },
 			secretStore: testutil.NewMemorySecretStore(nil),
-		}, nil)
+		}, nil, true)
 		if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 			t.Fatalf("error = %v", err)
 		}
@@ -719,7 +732,7 @@ func TestBuildRuntimeReturnsSafeSetupErrors(t *testing.T) {
 				secretstore.AnthropicAPIKey: "key",
 			}),
 			dataPath: func() (string, error) { return "", errors.New("secret") },
-		}, nil)
+		}, nil, true)
 		if err == nil || err.Error() != "データ保存先を解決できませんでした" || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("error = %v", err)
 		}
