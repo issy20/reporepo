@@ -25,7 +25,7 @@ func TestResolveRuntimeSecretsEnvironmentTakesPriorityWithoutStoreGet(t *testing
 	})
 	cfg := &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}
 
-	got, warnings, err := resolveRuntimeSecrets(cfg, store)
+	got, warnings, err := resolveRuntimeSecrets(cfg, store, true)
 	if err != nil {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveRuntimeSecretsLoadsStoreAndCorrectsProvider(t *testing.T) {
 	})
 	cfg := &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}
 
-	got, warnings, err := resolveRuntimeSecrets(cfg, store)
+	got, warnings, err := resolveRuntimeSecrets(cfg, store, true)
 	if err != nil {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResolveRuntimeSecretsBackendFailuresAreSafeWarnings(t *testing.T) {
 		secretstore.OpenAIAPIKey: errors.New("failure: " + sensitive),
 	}
 
-	got, warnings, err := resolveRuntimeSecrets(&core.Config{DefaultProvider: "openai"}, store)
+	got, warnings, err := resolveRuntimeSecrets(&core.Config{DefaultProvider: "openai"}, store, true)
 	if err != nil {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
 	}
@@ -150,9 +150,50 @@ func TestResolveRuntimeSecretsRejectsMissingAISecrets(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	store := testutil.NewMemorySecretStore(nil)
 
-	_, _, err := resolveRuntimeSecrets(&core.Config{}, store)
+	_, _, err := resolveRuntimeSecrets(&core.Config{}, store, true)
 	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
 		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
+	}
+}
+
+func TestResolveRuntimeSecretsWithoutAIRequirementSucceedsWithNoAIKeys(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.GitHubToken: "github",
+	})
+
+	got, warnings, err := resolveRuntimeSecrets(&core.Config{DefaultProvider: "claude"}, store, false)
+	if err != nil {
+		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
+	}
+	if got.GithubToken != "github" || got.AnthropicAPIKey != "" || got.OpenAIAPIKey != "" || got.GeminiAPIKey != "" {
+		t.Fatalf("resolved config = %#v", got)
+	}
+	if got.DefaultProvider != "claude" {
+		t.Fatalf("DefaultProvider = %q, want unchanged claude without provider fallback", got.DefaultProvider)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+}
+
+func TestResolveRuntimeSecretsWithoutAIRequirementStillResolvesSecrets(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
+	t.Setenv("OPENAI_API_KEY", "")
+	store := testutil.NewMemorySecretStore(map[secretstore.Key]string{
+		secretstore.OpenAIAPIKey: "openai",
+	})
+
+	got, _, err := resolveRuntimeSecrets(&core.Config{DefaultProvider: "claude"}, store, false)
+	if err != nil {
+		t.Fatalf("resolveRuntimeSecrets() error = %v", err)
+	}
+	if got.AnthropicAPIKey != "env-anthropic" || got.OpenAIAPIKey != "openai" {
+		t.Fatalf("resolved config = %#v", got)
 	}
 }
 

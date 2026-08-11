@@ -131,7 +131,7 @@ func newRootCommand(deps commandDependencies) *cobra.Command {
 		}
 		return p.Summary([]presentation.Row{{Label: "config", Value: configPath}, {Label: "data", Value: dataPath}})
 	}}
-	root.AddCommand(runCommand, configCommand, versionCommand, whereCommand, newAnalyzeCommand(deps))
+	root.AddCommand(runCommand, configCommand, versionCommand, whereCommand, newAnalyzeCommand(deps), newTrendingCommand(deps))
 	installHelp(root, deps.presenter)
 	return root
 }

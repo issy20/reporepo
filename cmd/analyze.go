@@ -35,7 +35,7 @@ func runAnalyze(deps commandDependencies, input, provider, language string, json
 	if deps.app == nil {
 		return errors.New("ランタイムを構築できません")
 	}
-	rt, err := buildRuntime(*deps.app, func(msg string) { fmt.Fprintln(errOut, "警告:", msg) })
+	rt, err := buildRuntime(*deps.app, func(msg string) { fmt.Fprintln(errOut, "警告:", msg) }, true)
 	if err != nil {
 		return err
 	}

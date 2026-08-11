@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,8 +18,9 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("repository not found")
-	ErrRateLimited = errors.New("github rate limit exceeded")
+	ErrNotFound            = errors.New("repository not found")
+	ErrRateLimited         = errors.New("github rate limit exceeded")
+	ErrTrendingRateLimited = errors.New("trending rate limit exceeded")
 )
 
 const maxREADMEBytes = 4 << 20 // 4 MiB
@@ -29,6 +32,12 @@ const (
 	maxCodeFileBytes     = 256 << 10 // 256 KiB
 	maxTreeResponseBytes = 8 << 20   // 8 MiB
 	maxCodeFileReadBytes = 1 << 20   // 1 MiB
+)
+
+// 疑似Trending検索の上限。
+const (
+	defaultTrendingLimit     = 30
+	maxTrendingResponseBytes = 1 << 20 // 1 MiB
 )
 
 var (
@@ -66,6 +75,7 @@ type treeEntry struct {
 type GitHubClient interface {
 	FetchRepository(ctx context.Context, owner, repo string) (*RepositoryData, error)
 	FetchRepositoryMeta(ctx context.Context, owner, repo string) (*core.RepoMeta, error)
+	SearchTrending(ctx context.Context, q TrendingQuery) ([]TrendingRepo, error)
 }
 
 type Client struct {
@@ -502,6 +512,84 @@ func (c *Client) fetchFileContent(ctx context.Context, owner, repo, path string)
 		return "", false
 	}
 	return string(body), true
+}
+
+// TrendingQuery は疑似Trending検索の条件。
+type TrendingQuery struct {
+	CreatedAfter time.Time
+	MinStars     int
+	Language     string
+	Limit        int
+}
+
+// TrendingRepo は疑似Trending一覧の1リポジトリ。名前・説明は攻撃者制御データ。
+type TrendingRepo struct {
+	FullName    string `json:"full_name"`
+	Description string `json:"description"`
+	Stars       int    `json:"stars"`
+	Language    string `json:"language"`
+}
+
+// searchResponseItem は GitHub Search API の1アイテム。
+type searchResponseItem struct {
+	FullName        string `json:"full_name"`
+	Description     string `json:"description"`
+	StargazersCount int    `json:"stargazers_count"`
+	Language        string `json:"language"`
+}
+
+// SearchTrending は Search API で「直近に作成されスターが伸びた repo」の一覧を近似する。
+func (c *Client) SearchTrending(ctx context.Context, q TrendingQuery) ([]TrendingRepo, error) {
+	query := fmt.Sprintf("created:>%s stars:>%d fork:false archived:false", q.CreatedAfter.Format("2006-01-02"), q.MinStars)
+	if q.Language != "" {
+		query += " language:" + q.Language
+	}
+	limit := q.Limit
+	if limit <= 0 {
+		limit = defaultTrendingLimit
+	}
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("sort", "stars")
+	params.Set("order", "desc")
+	params.Set("per_page", strconv.Itoa(limit))
+
+	resp, err := c.sendRequest(ctx, "GET", "/search/repositories?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrTrendingRateLimited
+	}
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			return nil, ErrTrendingRateLimited
+		}
+		return nil, &HTTPError{StatusCode: resp.StatusCode}
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTrendingResponseBytes))
+	if err != nil {
+		return nil, err
+	}
+	var searchResponse struct {
+		Items []searchResponseItem `json:"items"`
+	}
+	if err := json.Unmarshal(body, &searchResponse); err != nil {
+		return nil, err
+	}
+	repos := make([]TrendingRepo, 0, len(searchResponse.Items))
+	for _, item := range searchResponse.Items {
+		repos = append(repos, TrendingRepo{
+			FullName:    item.FullName,
+			Description: item.Description,
+			Stars:       item.StargazersCount,
+			Language:    item.Language,
+		})
+	}
+	return repos, nil
 }
 
 type HTTPError struct {
