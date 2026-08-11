@@ -38,6 +38,7 @@ type entryMutationKind uint8
 const (
 	mutationFavorite entryMutationKind = iota
 	mutationDelete
+	mutationNote
 )
 
 type entryMutationFinishedMsg struct {
@@ -59,6 +60,19 @@ func (m Model) analyzeCmd(ctx context.Context, input string, force bool, request
 
 func (m Model) analyze(ctx context.Context, input string, force bool) (*analyzer.Result, error) {
 	return m.analyzer.Analyze(ctx, input, m.language, m.provider, force)
+}
+
+// saveNoteCmd はノートを付けたエントリの複製を非同期で Upsert する。
+func (m Model) saveNoteCmd(note string) tea.Cmd {
+	updated := analyzer.CloneEntry(m.current)
+	updated.Note = note
+	requestID := m.mutationRequestID
+	fullName := m.current.FullName
+	store := m.store
+	return func() tea.Msg {
+		err := store.Upsert(updated)
+		return entryMutationFinishedMsg{requestID: requestID, kind: mutationNote, fullName: fullName, err: userStoreError(err)}
+	}
 }
 
 // trendingCmd は疑似Trending一覧をキャッシュ確認 → 取得 → 保存の順で非同期実行する。

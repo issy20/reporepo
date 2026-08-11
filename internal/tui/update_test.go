@@ -616,3 +616,103 @@ func TestDetailNavigationIsPassedToViewport(t *testing.T) {
 		}
 	}
 }
+
+func noteEditModel(entry *core.Entry, store entryStore) Model {
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.state, m.current = stateDetail, entry
+	m.width, m.height = 80, 24
+	m.viewport.Width, m.viewport.Height = 78, 21
+	m.setDetailContent()
+	return m
+}
+
+func TestNoteKeyEntersEditMode(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Note: "既存ノート"}
+	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})
+	m, cmd := updated(t, m, runeKey('n'))
+	if !m.noteEditing || !m.noteEditor.Focused() || cmd == nil {
+		t.Fatalf("noteEditing=%v focused=%v cmd=%v", m.noteEditing, m.noteEditor.Focused(), cmd)
+	}
+	if m.noteEditor.Value() != "既存ノート" {
+		t.Fatalf("editor value=%q, want 既存ノート", m.noteEditor.Value())
+	}
+}
+
+func TestNoteEditingCtrlSStartsMutationWithNote(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := noteEditModel(entry, store)
+	m, _ = updated(t, m, runeKey('n'))
+	m.noteEditor.SetValue("学習メモ")
+	pending, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil || pending.noteEditing || !pending.mutationPending || pending.mutationRequestID != 1 {
+		t.Fatalf("noteEditing=%v pending=%v id=%d cmd=%v", pending.noteEditing, pending.mutationPending, pending.mutationRequestID, cmd)
+	}
+	_ = cmd()
+	if store.upsertCalls != 1 || len(store.entries) != 1 || store.entries[0].Note != "学習メモ" {
+		t.Fatalf("upsert=%d entries=%#v", store.upsertCalls, store.entries)
+	}
+	if entry.Note != "" {
+		t.Fatal("original entry mutated before mutation result")
+	}
+}
+
+func TestNoteSaveShowsNoteInDetail(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "summary"}}}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	renderer := &recordingRenderer{}
+	m := NewModel(Dependencies{Store: store, Renderer: renderer}, nil)
+	m.state, m.current = stateDetail, entry
+	m.width, m.height = 80, 24
+	m.viewport.Width, m.viewport.Height = 78, 21
+	m, _ = updated(t, m, runeKey('n'))
+	m.noteEditor.SetValue("保存するノート")
+	pending, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	got, _ := updated(t, pending, cmd())
+	if got.mutationPending || got.noteEditing {
+		t.Fatalf("pending=%v noteEditing=%v", got.mutationPending, got.noteEditing)
+	}
+	if !strings.Contains(renderer.source, "保存するノート") {
+		t.Fatalf("note missing from rendered detail: %q", renderer.source)
+	}
+	if view := got.View(); !strings.Contains(view, "保存するノート") {
+		t.Fatalf("note missing from view: %q", view)
+	}
+}
+
+func TestNoteEditingEscapeCancelsWithoutSaving(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := noteEditModel(entry, store)
+	m, _ = updated(t, m, runeKey('n'))
+	m.noteEditor.SetValue("編集途中")
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if got.noteEditing || cmd != nil || got.state != stateDetail {
+		t.Fatalf("noteEditing=%v cmd=%v state=%v", got.noteEditing, cmd, got.state)
+	}
+	if store.upsertCalls != 0 || entry.Note != "" {
+		t.Fatalf("note saved on cancel: upsert=%d note=%q", store.upsertCalls, entry.Note)
+	}
+}
+
+func TestNoteEditingEscapeDoesNotLeaveDetail(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})
+	m, _ = updated(t, m, runeKey('n'))
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if got.state != stateDetail || got.current != entry || cmd != nil {
+		t.Fatalf("state=%v current=%#v cmd=%v", got.state, got.current, cmd)
+	}
+}
+
+func TestNoteEditingKeysGoToEditorAndOthersNavigate(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})
+	m, _ = updated(t, m, runeKey('n'))
+	for _, r := range []rune{'f', 'r', 'l', 'n'} {
+		got, _ := updated(t, m, runeKey(r))
+		if !got.noteEditing || got.state != stateDetail {
+			t.Fatalf("rune=%c escaped edit mode: noteEditing=%v state=%v", r, got.noteEditing, got.state)
+		}
+	}
+}

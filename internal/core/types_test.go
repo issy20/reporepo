@@ -35,6 +35,38 @@ func TestExistingJSONWithZeroFetchedAtLoads(t *testing.T) {
 	}
 }
 
+func TestEntryNoteMarshalsAndUnmarshals(t *testing.T) {
+	entry := &Entry{FullName: "owner/repo", Note: "学習メモ\n複数行"}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var decoded Entry
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if decoded.Note != "学習メモ\n複数行" {
+		t.Fatalf("Note = %q, want %q", decoded.Note, "学習メモ\n複数行")
+	}
+	if decoded.FullName != "owner/repo" {
+		t.Fatalf("FullName = %q", decoded.FullName)
+	}
+}
+
+func TestExistingJSONWithoutNoteLoadsEmpty(t *testing.T) {
+	data := []byte(`{"full_name":"owner/repo"}`)
+	var entry Entry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if entry.Note != "" {
+		t.Fatalf("Note = %q, want empty for legacy JSON", entry.Note)
+	}
+	if entry.FullName != "owner/repo" {
+		t.Fatalf("FullName = %q", entry.FullName)
+	}
+}
+
 func TestAnalysisIsStale(t *testing.T) {
 	updated := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
 	created := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)

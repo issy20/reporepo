@@ -176,13 +176,19 @@ func (m Model) viewDetail() string {
 		return fitLine("解析結果がありません", width) + "\n\n" + fitLine("Esc: 戻る", width)
 	}
 	var b strings.Builder
+	if m.noteEditing {
+		b.WriteString(m.noteEditor.View())
+		b.WriteByte('\n')
+		b.WriteString(fitLine(dimStyle.Render("Ctrl+S: 保存  Esc: キャンセル"), width))
+		return b.String()
+	}
 	b.WriteString(m.viewport.View())
 	for _, warning := range m.warnings {
 		b.WriteByte('\n')
 		b.WriteString(fitLine(warningStyle.Render(safeText(warning)), width))
 	}
 	b.WriteByte('\n')
-	b.WriteString(fitLine(dimStyle.Render("Esc: 戻る  ↑↓/PgUp/PgDn: スクロール  l: 言語  f: お気に入り  r: 再生成"), width))
+	b.WriteString(fitLine(dimStyle.Render("Esc: 戻る  ↑↓/PgUp/PgDn: スクロール  l: 言語  f: お気に入り  r: 再生成  n: ノート編集"), width))
 	return b.String()
 }
 
@@ -212,6 +218,10 @@ func detailMarkdown(entry *core.Entry, language string, now time.Time) string {
 			keywords[i] = safeText(keyword)
 		}
 		fmt.Fprintf(&b, "## Summary\n%s\n\n## Tech Stack\n%s\n\n## Background\n%s\n\n## Keywords\n%s", safeText(a.Summary), safeText(a.TechStack), safeText(a.Background), strings.Join(keywords, ", "))
+	}
+	if note := strings.TrimSpace(entry.Note); note != "" {
+		b.WriteString("\n\n## ノート\n")
+		b.WriteString(safeText(note))
 	}
 	return b.String()
 }

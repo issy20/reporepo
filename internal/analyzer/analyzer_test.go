@@ -131,6 +131,44 @@ func TestAnalyzeForceIgnoresCache(t *testing.T) {
 	}
 }
 
+func TestAnalyzeForcePreservesNote(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Note: "学習メモ", Analyses: map[string]*core.Analysis{"ja": {Summary: "old"}}}
+	s := &fakeStore{entries: []*core.Entry{entry}}
+	gh := &fakeGitHub{data: &clients.RepositoryData{Meta: &core.RepoMeta{FullName: "owner/repo"}}}
+	ai := &fakeAI{analysis: &core.Analysis{Summary: "new"}}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", true)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if got.Entry.Note != "学習メモ" {
+		t.Fatalf("Note = %q, want 学習メモ preserved on force re-analysis", got.Entry.Note)
+	}
+}
+
+func TestAnalyzeCacheHitPreservesNote(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Note: "学習メモ", RepoMeta: &core.RepoMeta{FetchedAt: time.Unix(99, 0)}, Analyses: map[string]*core.Analysis{"ja": {PromptVersion: 1, Provider: "claude", Summary: "cached"}}}
+	s, gh, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeGitHub{}, &fakeAI{}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if got.Entry.Note != "学習メモ" {
+		t.Fatalf("Note = %q, want 学習メモ preserved on cache hit", got.Entry.Note)
+	}
+}
+
+func TestAnalyzeNewEntryHasEmptyNote(t *testing.T) {
+	meta := &core.RepoMeta{FullName: "owner/repo"}
+	s, gh, ai := &fakeStore{}, &fakeGitHub{data: &clients.RepositoryData{Meta: meta, README: "readme"}}, &fakeAI{analysis: &core.Analysis{}}
+	got, err := newAnalyzer(s, gh, ai).Analyze(context.Background(), "owner/repo", "ja", "claude", false)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if got.Entry.Note != "" {
+		t.Fatalf("Note = %q, want empty for new entry", got.Entry.Note)
+	}
+}
+
 func TestAnalyzePassesFormattedCodeContextToAI(t *testing.T) {
 	meta := &core.RepoMeta{FullName: "owner/repo"}
 	data := &clients.RepositoryData{

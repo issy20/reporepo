@@ -417,3 +417,68 @@ func TestEntryHasStaleAnalysis(t *testing.T) {
 		t.Fatal("nil entry or nil analyses flagged stale")
 	}
 }
+
+func TestDetailMarkdownShowsNoteBelowAnalysis(t *testing.T) {
+	entry := &core.Entry{
+		FullName: "owner/repo",
+		Analyses: map[string]*core.Analysis{"ja": {Summary: "要約"}},
+		Note:     "学習メモ\n複数行",
+	}
+	got := detailMarkdown(entry, "ja", time.Now())
+	noteIdx := strings.Index(got, "## ノート")
+	analysisIdx := strings.Index(got, "要約")
+	if noteIdx < 0 {
+		t.Fatalf("note section missing: %q", got)
+	}
+	if noteIdx < analysisIdx {
+		t.Fatalf("note appears before analysis: %q", got)
+	}
+	if !strings.Contains(got, "学習メモ\n複数行") {
+		t.Fatalf("note body missing: %q", got)
+	}
+}
+
+func TestDetailMarkdownHidesEmptyNote(t *testing.T) {
+	for _, note := range []string{"", "   "} {
+		entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {Summary: "要約"}}, Note: note}
+		if got := detailMarkdown(entry, "ja", time.Now()); strings.Contains(got, "## ノート") {
+			t.Fatalf("note=%q rendered empty note section: %q", note, got)
+		}
+	}
+}
+
+func TestDetailSanitizesNoteControlCharacters(t *testing.T) {
+	renderer := &recordingRenderer{}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: renderer}, nil)
+	m.current = &core.Entry{FullName: "owner/repo", Note: "メモ\x1b[31m赤\x00制御"}
+	m.setDetailContent()
+	if strings.ContainsAny(renderer.source, "\x00\x07\x1b\x7f") {
+		t.Fatalf("unsafe control character in note: %q", renderer.source)
+	}
+	if !strings.Contains(renderer.source, "メモ") || !strings.Contains(renderer.source, "制御") {
+		t.Fatalf("note content lost: %q", renderer.source)
+	}
+}
+
+func TestNoteEditingViewShowsEditorAndHint(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})
+	m, _ = updated(t, m, runeKey('n'))
+	view := m.View()
+	if !strings.Contains(view, "Ctrl+S: 保存") || !strings.Contains(view, "Esc: キャンセル") {
+		t.Fatalf("edit view missing hints: %q", view)
+	}
+}
+
+func TestDetailViewShowsNoteEditingHintWhenNoteExists(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo", Note: "メモ"}
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
+	m.state, m.current = stateDetail, entry
+	m.width, m.height = 120, 10
+	m.viewport.Width, m.viewport.Height = 118, 4
+	m.setDetailContent()
+	view := m.View()
+	if !strings.Contains(view, "n: ノート編集") {
+		t.Fatalf("edit hint missing: %q", view)
+	}
+}

@@ -18,6 +18,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = layout.inputWidth
 		m.viewport.Width = layout.viewportWidth
 		m.viewport.Height = layout.viewportHeight
+		m.noteEditor.SetWidth(layout.viewportWidth)
+		m.noteEditor.SetHeight(max(3, layout.height-8))
 		if m.state == stateDetail {
 			m.resizeDetailContent()
 		}
@@ -188,11 +190,21 @@ func (m Model) updateLoading(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.noteEditing {
+		return m.updateNoteEditing(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		m.state = stateInput
 		m.current = nil
 		return m, nil
+	case "n":
+		if m.current == nil {
+			return m, nil
+		}
+		m.noteEditor.SetValue(m.current.Note)
+		m.noteEditing = true
+		return m, m.noteEditor.Focus()
 	case "f":
 		return m.toggleFavorite()
 	case "r":
@@ -213,6 +225,28 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
+}
+
+// updateNoteEditing はノート編集モード中のキー操作を処理する。
+func (m Model) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+s":
+		if m.mutationPending || m.current == nil || m.store == nil {
+			return m, nil
+		}
+		m.noteEditing = false
+		m.noteEditor.Blur()
+		m.mutationRequestID++
+		m.mutationPending = true
+		return m, m.saveNoteCmd(m.noteEditor.Value())
+	case "esc":
+		m.noteEditing = false
+		m.noteEditor.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.noteEditor, cmd = m.noteEditor.Update(msg)
 	return m, cmd
 }
 

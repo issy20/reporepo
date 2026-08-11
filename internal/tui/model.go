@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,6 +52,8 @@ type Model struct {
 	input         textinput.Model
 	spinner       spinner.Model
 	viewport      viewport.Model
+	noteEditor    textarea.Model
+	noteEditing   bool
 	width, height int
 
 	entries      []*core.Entry
@@ -116,7 +119,10 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	}
 	layout := newLayout(80, 24)
 	input.Width = layout.inputWidth
-	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer, trendingCachePath: deps.TrendingCachePath}
+	editor := textarea.New()
+	editor.SetWidth(layout.viewportWidth)
+	editor.SetHeight(max(3, layout.height-8))
+	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), noteEditor: editor, width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer, trendingCachePath: deps.TrendingCachePath}
 	m.analyzer = analyzer.New(deps.Store, deps.GitHub, deps.AI, now, analyzer.DefaultRefreshInterval)
 	m.reloadEntries()
 	return m

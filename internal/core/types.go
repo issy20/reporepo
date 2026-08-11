@@ -8,6 +8,7 @@ type Entry struct {
 	RepoMeta   *RepoMeta            `json:"repo_meta"`
 	Analyses   map[string]*Analysis `json:"analyses"`
 	IsFavorite bool                 `json:"is_favorite"`
+	Note       string               `json:"note"`
 	ViewedAt   time.Time            `json:"viewed_at"`
 	CreatedAt  time.Time            `json:"created_at"`
 }
