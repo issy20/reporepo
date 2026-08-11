@@ -20,6 +20,7 @@ const (
 	stateInput screenState = iota
 	stateLoading
 	stateDetail
+	stateTrending
 )
 
 type listTab uint8
@@ -37,11 +38,12 @@ type entryStore interface {
 
 // Dependencies は TUI が利用する外部境界をまとめる。
 type Dependencies struct {
-	Store    entryStore
-	GitHub   clients.GitHubClient
-	AI       map[string]clients.AIClient
-	Now      func() time.Time
-	Renderer markdownRenderer
+	Store             entryStore
+	GitHub            clients.GitHubClient
+	AI                map[string]clients.AIClient
+	Now               func() time.Time
+	Renderer          markdownRenderer
+	TrendingCachePath string
 }
 
 type Model struct {
@@ -73,6 +75,14 @@ type Model struct {
 
 	mutationRequestID uint64
 	mutationPending   bool
+
+	trendingRepos     []clients.TrendingRepo
+	trendingSelected  int
+	trendingErr       string
+	trendingStale     bool
+	trendingLoading   bool
+	trendingRequestID uint64
+	trendingCachePath string
 }
 
 func NewModel(deps Dependencies, cfg *core.Config) Model {
@@ -106,7 +116,7 @@ func NewModel(deps Dependencies, cfg *core.Config) Model {
 	}
 	layout := newLayout(80, 24)
 	input.Width = layout.inputWidth
-	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer}
+	m := Model{state: stateInput, input: input, spinner: sp, viewport: viewport.New(0, 0), width: layout.width, height: layout.height, language: language, provider: provider, store: deps.Store, github: deps.GitHub, ai: deps.AI, now: now, renderer: renderer, trendingCachePath: deps.TrendingCachePath}
 	m.analyzer = analyzer.New(deps.Store, deps.GitHub, deps.AI, now, analyzer.DefaultRefreshInterval)
 	m.reloadEntries()
 	return m

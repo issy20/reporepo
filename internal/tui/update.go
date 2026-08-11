@@ -71,6 +71,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case trendingLoadedMsg:
+		if msg.requestID != m.trendingRequestID {
+			return m, nil
+		}
+		m.trendingLoading = false
+		m.trendingRepos = msg.repos
+		m.trendingSelected = 0
+		m.trendingErr = ""
+		m.trendingStale = msg.stale
+		if msg.stale {
+			m.trendingErr = "レート制限のため、キャッシュ済みの一覧を表示しています。時間をおいて再実行してください"
+		}
+		return m, nil
+	case trendingFailedMsg:
+		if msg.requestID != m.trendingRequestID {
+			return m, nil
+		}
+		m.trendingLoading = false
+		m.trendingErr = msg.err.Error()
+		m.trendingStale = false
+		return m, nil
 	case spinnerTickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg.msg)
@@ -81,11 +102,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLoading(msg)
 		case stateDetail:
 			return m.updateDetail(msg)
+		case stateTrending:
+			return m.updateTrending(msg)
 		default:
 			return m.updateInput(msg)
 		}
 	}
-	if m.state == stateLoading {
+	if m.state == stateLoading || m.trendingLoading {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -140,6 +163,8 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.toggleFavorite()
 		case "d":
 			return m.deleteSelected()
+		case "t":
+			return m.startTrending()
 		case "q":
 			return m, tea.Quit
 		}
@@ -199,6 +224,52 @@ func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
 	m.errMessage = ""
 	m.loadingLabel = "解析しています: " + input
 	return m, m.analyzeCmd(ctx, input, force, m.requestID)
+}
+
+// startTrending は Trending 一覧画面へ遷移し、非同期で一覧取得を開始する。
+func (m Model) startTrending() (tea.Model, tea.Cmd) {
+	if m.github == nil {
+		m.errMessage = errTrendingFetch.Error()
+		return m, nil
+	}
+	m.state = stateTrending
+	m.trendingRepos = nil
+	m.trendingSelected = 0
+	m.trendingErr = ""
+	m.trendingStale = false
+	m.trendingLoading = true
+	m.trendingRequestID++
+	requestID := m.trendingRequestID
+	return m, m.trendingCmd(requestID)
+}
+
+// updateTrending は Trending 一覧画面のキー操作を処理する。
+func (m Model) updateTrending(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.trendingRequestID++
+		m.trendingLoading = false
+		m.state = stateInput
+		return m, nil
+	case "enter":
+		if m.trendingLoading || m.trendingSelected < 0 || m.trendingSelected >= len(m.trendingRepos) || m.trendingRepos[m.trendingSelected].FullName == "" {
+			return m, nil
+		}
+		return m.startAnalysis(m.trendingRepos[m.trendingSelected].FullName, false)
+	case "up":
+		if m.trendingSelected > 0 {
+			m.trendingSelected--
+		}
+		return m, nil
+	case "down":
+		if m.trendingSelected+1 < len(m.trendingRepos) {
+			m.trendingSelected++
+		}
+		return m, nil
+	case "t":
+		return m.startTrending()
+	}
+	return m, nil
 }
 
 func (m Model) toggleFavorite() (tea.Model, tea.Cmd) {

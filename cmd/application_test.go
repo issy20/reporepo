@@ -13,6 +13,7 @@ import (
 	"github.com/issy20/reporepo/internal/secretstore"
 	"github.com/issy20/reporepo/internal/store"
 	"github.com/issy20/reporepo/internal/testutil"
+	"github.com/issy20/reporepo/internal/trendingcache"
 	"github.com/issy20/reporepo/internal/tui"
 )
 
@@ -541,6 +542,30 @@ func TestRunApplicationBuildsTUIDependencies(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("TUI was not started")
+	}
+}
+
+func TestRunApplicationPassesTrendingCachePathToTUI(t *testing.T) {
+	cfg := &core.Config{DefaultProvider: "claude"}
+	path := filepath.Join(t.TempDir(), "data.json")
+	var gotCachePath string
+	err := runApplicationWith(applicationDependencies{
+		loadConfig: func() (*core.Config, error) { return cfg, nil },
+		secretStore: testutil.NewMemorySecretStore(map[secretstore.Key]string{
+			secretstore.AnthropicAPIKey: "anthropic",
+		}),
+		dataPath: func() (string, error) { return path, nil },
+		runTUI: func(deps tui.Dependencies, _ *core.Config) error {
+			gotCachePath = deps.TrendingCachePath
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runApplicationWith() error = %v", err)
+	}
+	want := trendingcache.Path(path)
+	if gotCachePath != want {
+		t.Fatalf("TrendingCachePath = %q, want %q", gotCachePath, want)
 	}
 }
 
