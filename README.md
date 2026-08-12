@@ -12,6 +12,8 @@ GitHubリポジトリをAI（Claude / OpenAI / Google Gemini）で解析し、�
 - **履歴とお気に入り**: 同じリポジトリは1エントリに集約。`tab` で履歴 ⇄ お気に入りを切替
 - **キャッシュ優先**: 生成済みの結果はAIを再呼び出しせず即表示。`r` キーで強制再生成。AI入力定義が変わった古い解析は1回だけ自動再生成
 - **キャッシュ鮮度の自動維持**: 開くたびに GitHub 由来のメタ情報（説明・スター数等）を 7 日間隔で自動再取得し、更新があれば反映（言語構成は維持）。古い解析は一覧の `◌` と詳細の案内で「リポジトリ更新前のもの」と分かるように表示。AI解析は費用がかかるため自動再生成せず、`r` キーでのみ再生成
+- **疑似Trending一覧（学びのネタ探し）**: `t` キー（TUI）や `reporepo trending`（CLI）で「直近に作成されスターが伸びた」リポジトリの一覧を表示し、そのまま解析できる。GitHub Search APIで近似し、一覧は6時間キャッシュ
+- **学習ノート**: 各リポジトリに自分のメモを保存・編集・表示（詳細画面で `n` → 編集 → `Ctrl+S` 保存）。解析の再生成・キャッシュ更新後もノートは保持
 - **セキュアなsecret管理**: API keyは設定JSONへ保存せず、OSの資格情報ストアへ保存
 
 ## 要件
@@ -40,6 +42,7 @@ make build
 reporepo config   # 対話的にAPI keyを設定
 reporepo run      # TUIを起動
 reporepo analyze owner/repo   # TUIなしで解析し結果を出力
+reporepo trending # 直近に伸びたリポジトリの一覧を表示
 ```
 
 `config` コマンドをスキップして環境変数だけで動かすこともできます。詳細は「設定」を参照してください。
@@ -50,6 +53,7 @@ reporepo analyze owner/repo   # TUIなしで解析し結果を出力
 |---|---|
 | `reporepo run` | TUIを起動 |
 | `reporepo analyze owner/repo` | リポジトリを解析して結果を出力（非対話） |
+| `reporepo trending` | 直近に作成されスターが伸びたリポジトリの一覧を表示 |
 | `reporepo config` | 設定を対話的に編集（設定ウィザード） |
 | `reporepo version` | バージョンを表示 |
 | `reporepo where` | 設定・データファイルの保存先を表示 |
@@ -69,6 +73,7 @@ reporepo analyze owner/repo   # TUIなしで解析し結果を出力
 | `d` | 選択中の履歴を削除 |
 | `l` | 言語（日本語 ⇄ 英語）を切替 |
 | `p` | AIプロバイダを切替 |
+| `t` | 疑似Trending一覧を表示 |
 | `q` / `Esc` | 終了 |
 
 ### 解析中
@@ -85,7 +90,17 @@ reporepo analyze owner/repo   # TUIなしで解析し結果を出力
 | `l` | 言語を切替（その言語の結果が無ければ再生成） |
 | `f` | お気に入りに追加 / 解除 |
 | `r` | 選択中の言語で強制再生成 |
+| `n` | 学習ノートを編集（`Ctrl+S`: 保存 / `Esc`: キャンセル） |
 | `Esc` | 一覧へ戻る |
+
+### Trending一覧画面
+
+| キー | 操作 |
+|---|---|
+| `Enter` | 選択中のリポジトリを解析 |
+| `↑` / `↓` | 一覧の選択を移動 |
+| `t` | 一覧を再取得 |
+| `Esc` | 入力画面へ戻る |
 
 ## 非対話解析（analyze コマンド）
 
@@ -108,6 +123,36 @@ reporepo analyze --force owner/repo
 設定・secret・クライアント構築は `run` と同じ経路を使い、ストア（`data.json`）も共有します。解析結果は保存され、TUI の履歴にも現れます。キャッシュヒット時は AI を呼ばず保存済みを出力します（`--force` で再生成）。
 
 出力は常に ANSI を含まない plain text で、`--json` 時は JSON オブジェクト1件です。警告・エラーは stderr、結果は stdout へ出力し、終了コードは成功 0 / 失敗 1 です。
+
+## 疑似Trending一覧（trending コマンド）
+
+GitHub には公式の Trending API が存在しないため、Search API で「直近に作成され、スターが伸びた」リポジトリを近似した一覧を表示します。AIキーが未設定でも動作します（GitHub API のみを使用）。
+
+```bash
+reporepo trending
+reporepo trending --since week --language go
+reporepo trending --min-stars 100 --json
+```
+
+| フラグ | 既定 | 説明 |
+|---|---|---|
+| `--since` | `week` | 作成日時ウィンドウ（`today` / `week` / `month`） |
+| `--language` | なし | 言語絞り込み |
+| `--min-stars` | `50` | スター数の下限 |
+| `--json` | false | 結果を JSON 配列として出力 |
+
+一覧は **6時間** キャッシュされ（`data.json` と同じディレクトリの `trending-cache.json`）、同じ条件の再取得を避けます。GitHub Search API のレート制限時は、キャッシュがあればそれを表示し、なければ時間をおいて再実行するよう案内します。
+
+一覧で気になるリポジトリは `reporepo analyze owner/repo` に渡すことで、そのまま既存パイプラインで解析・保存できます（TUI では `t` キー → 選択 → Enter）。
+
+## 学習ノート
+
+各リポジトリのエントリに、自分の学習メモを保存できます。AI解析結果は参照用で、書き足したノートが学習の記録として蓄積されます。
+
+- 詳細画面で `n` を押すと複数行エディタが開きます
+- `Ctrl+S` で保存、`Esc` でキャンセル
+- ノートはリポジトリ単位で `data.json` の `note` フィールドに保存され、解析の再生成（`r`）やキャッシュ更新後も保持されます
+- ノートが空の場合は表示されません
 
 ## 設定
 
@@ -227,14 +272,17 @@ go vet ./...
 ```
 reporepo/
   main.go                      # エントリポイント
-  cmd/                         # Cobra CLI（run / analyze / config / version / where）
+  cmd/                         # Cobra CLI（run / analyze / trending / config / version / where）
     root.go                    #   ルートコマンド定義
     analyze.go                 #   analyze コマンド（非対話解析）
     analyze_output.go          #   analyze の plain / JSON 出力整形
+    trending.go                #   trending コマンド（疑似Trending一覧）
+    trending_output.go         #   trending の plain / JSON 出力整形
     wizard.go                  #   設定ウィザード
   internal/
     presentation/              # CLIのsemantic rendering（TTY / plain切替）
     analyzer/                  # 共有解析パイプライン（キャッシュ確認 → GitHub取得 → AI生成 → 保存）
+    trendingcache/             # 疑似Trending一覧のファイルキャッシュ（TTL付き・アトミック保存）
     core/                      # データ型（Entry / RepoMeta / Analysis）と設定管理
     secretstore/               # OS資格情報ストア境界（keyring実装）
     store/                     # 解析履歴のJSON永続化
