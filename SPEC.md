@@ -432,6 +432,29 @@ OS資格情報ストアの値をテストで実際に読み書きしてはなら
 
 Makefile の `cross` ターゲットで darwin/linux/windows × amd64/arm64 の単一バイナリを一括ビルドする。GoReleaser でタグ push をトリガにリリースを自動化し、各 OS 向けアーカイブとチェックサムを生成する。配布手段は GitHub Releases のビルド済みバイナリ、`go install`、（任意で）Homebrew tap を想定する。
 
+### 8.1 バージョン注入
+
+`version` は `cmd` パッケージの `var` として定義され、ビルド時に `-ldflags "-X github.com/issy20/reporepo/cmd.version=<version>"` で上書きされる。開発ビルドの既定値は `0.1.0`。
+
+### 8.2 リリース手順
+
+タグを push すると `.github/workflows/release.yml` が GoReleaser を実行し、GitHub Releases へビルド済みバイナリとチェックサムを公開する。ローカル検証は `goreleaser release --snapshot --clean`（`make release` は実際のリリースを実行）。
+
+```bash
+# スナップショット検証（GitHub へ公開しない）
+goreleaser release --snapshot --clean
+
+# リリース: v0.1.0 などのタグを作成して push
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GoReleaser が未導入の場合は `go install github.com/goreleaser/goreleaser/v2@latest` で導入する。
+
+### 8.3 CI
+
+`.github/workflows/ci.yml` が PR と main への push で `go vet` / `go test` / `go test -race` を実行する。回帰テストを担保し、リリース前の品質を維持する。
+
 ---
 
 ## 9. 実装状況

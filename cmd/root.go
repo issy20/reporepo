@@ -11,7 +11,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.1.0"
+// version はビルド時に -ldflags で上書きされる（GoReleaser の .Version 注入用）。
+// 既定値は development ビルドでの表示に使われる。
+var version = "0.1.0"
 
 // Execute はプロセス引数を解釈して CLI を実行する。
 func Execute() error {

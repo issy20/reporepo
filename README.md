@@ -293,3 +293,16 @@ reporepo/
 ### リリース
 
 `make cross` で単一バイナリをクロスコンパイルできます（CGO不要）。各OS向けのビルド済みバイナリは `dist/` に出力されます。
+
+GoReleaser による GitHub Releases への自動リリースを `.github/workflows/release.yml` が担います。`v*` タグを push すると、`-ldflags` でバージョンが注入された各OS向けバイナリ・アーカイブ・`checksums.txt` が公開されます。
+
+```bash
+# ローカルでスナップショット検証（GitHub へは公開しない）
+goreleaser release --snapshot --clean
+
+# リリース（タグ push がトリガ）
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+回帰テストは `.github/workflows/ci.yml` が PR と main への push で実行します（`go vet` / `go test` / `go test -race`）。
