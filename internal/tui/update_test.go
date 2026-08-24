@@ -731,6 +731,43 @@ func TestNoteEditingEscapeDoesNotLeaveDetail(t *testing.T) {
 	}
 }
 
+func TestNoteSaveFailureSetsErrorMessageInDetailView(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}, upsertErr: errors.New("secret path")}
+	m := noteEditModel(entry, store)
+	m, _ = updated(t, m, runeKey('n'))
+	m.noteEditor.SetValue("保存するノート")
+	pending, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	got, _ := updated(t, pending, cmd())
+	if got.mutationPending || got.noteEditing {
+		t.Fatalf("pending=%v noteEditing=%v", got.mutationPending, got.noteEditing)
+	}
+	if got.state != stateDetail || got.errMessage != "履歴を保存できませんでした" {
+		t.Fatalf("state=%v err=%q", got.state, got.errMessage)
+	}
+	if view := got.View(); !strings.Contains(view, "履歴を保存できませんでした") {
+		t.Fatalf("error missing from detail view: %q", view)
+	}
+}
+
+func TestDetailFavoriteFailureShowsErrorMessage(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}, upsertErr: errors.New("secret path")}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.state, m.current = stateDetail, entry
+	m.width, m.height = 80, 24
+	m.viewport.Width, m.viewport.Height = 78, 21
+	m.setDetailContent()
+	pending, cmd := updated(t, m, runeKey('f'))
+	got, _ := updated(t, pending, cmd())
+	if got.state != stateDetail || got.errMessage != "履歴を保存できませんでした" {
+		t.Fatalf("state=%v err=%q", got.state, got.errMessage)
+	}
+	if view := got.View(); !strings.Contains(view, "履歴を保存できませんでした") {
+		t.Fatalf("error missing from detail view: %q", view)
+	}
+}
+
 func TestNoteEditingKeysGoToEditorAndOthersNavigate(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo"}
 	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})

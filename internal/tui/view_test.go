@@ -368,6 +368,58 @@ func TestInputViewMarksStaleEntriesWithoutExternalCalls(t *testing.T) {
 	}
 }
 
+func TestDetailViewShowsErrorMessage(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	m.width, m.height = 40, 10
+	m.viewport.Width, m.viewport.Height = 38, 4
+	m.errMessage = "ノートを保存できませんでした"
+	m.setDetailContent()
+	view := m.View()
+	if !strings.Contains(view, "ノートを保存できませんでした") {
+		t.Fatalf("error not shown: %q", view)
+	}
+}
+
+func TestDetailViewSanitizesErrorMessageControlCharacters(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	m.width, m.height = 40, 10
+	m.viewport.Width, m.viewport.Height = 38, 4
+	m.errMessage = "エラー\x1b[31m\x00制御"
+	m.setDetailContent()
+	view := m.View()
+	if strings.ContainsAny(view, "\x00\x07\x1b\x7f") {
+		t.Fatalf("unsafe control character in detail error: %q", view)
+	}
+	if !strings.Contains(view, "エラー") || !strings.Contains(view, "制御") {
+		t.Fatalf("error content lost: %q", view)
+	}
+}
+
+func TestDetailViewHidesErrorWhenEmpty(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
+	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
+	m.width, m.height = 40, 10
+	m.viewport.Width, m.viewport.Height = 38, 4
+	m.setDetailContent()
+	view := m.View()
+	if m.errMessage != "" && strings.Contains(view, "error") {
+		t.Fatalf("unexpected error shown: %q", view)
+	}
+}
+
+func TestDetailViewNoteEditingHidesErrorMessage(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	m := noteEditModel(entry, &fakeStore{entries: []*core.Entry{entry}})
+	m, _ = updated(t, m, runeKey('n'))
+	m.errMessage = "エラー"
+	view := m.View()
+	if !strings.Contains(view, "Ctrl+S: 保存") || strings.Contains(view, "エラー") {
+		t.Fatalf("error leaked into edit view: %q", view)
+	}
+}
+
 func TestDetailViewShowsWarnings(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
 	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}
