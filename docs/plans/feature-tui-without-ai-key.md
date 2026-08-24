@@ -4,18 +4,18 @@ Status: draft
 
 ## 目的
 
-現在、TUI（`run` / ルートコマンド）は起動時に AI API key が必須であり、未設定だと `ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください` で終了する。しかし疑似Trending一覧（SPEC 2.12）の実装により、TUI 上で AI key なしに動作する機能（Trending閲覧・履歴・お気に入り・ノート）が増えた。
+現在、TUI（`run` / ルートコマンド）は起動時に AI API key が必須であり、未設定だと `ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください` で終了する。しかし疑似Trending一覧（SPEC 2.12）の実装により、TUI 上で AI API key なしに動作する機能（Trending閲覧・履歴・お気に入り・ノート）が増えた。
 
-本計画では TUI 起動時の AI key 必須要件を外し、AI key なしでも TUI を起動して AI を必要としない機能を利用できるようにする。AI key が必要になるのは `analyze`（解析実行）時だけとし、その際は設定方法を案内する。
+本計画では TUI 起動時の AI API key 必須要件を外し、AI API key なしでも TUI を起動して AI を必要としない機能を利用できるようにする。AI API key が必要になるのは `analyze`（解析実行）時だけとし、その際は設定方法を案内する。
 
-`reporepo analyze` コマンド（SPEC 2.11）は解析を主目的とするため、従来どおり AI key 必須を維持する。
+`reporepo analyze` コマンド（SPEC 2.11）は解析を主目的とするため、従来どおり AI API key 必須を維持する。
 
 ## 前提
 
-- `buildRuntime`（`cmd/application.go:88`）は `requireAI bool` フラグを持つ。`true` のとき `resolveRuntimeSecrets`（`cmd/secrets.go:23`）が AI key 未設定エラーと provider フォールバックを行う。
-- `runApplicationWith`（`cmd/application.go:187`）は `buildRuntime(deps, deps.warn, true)` を呼び、**TUI 起動時に AI key を必須**にしている。ここが変更点。
+- `buildRuntime`（`cmd/application.go:88`）は `requireAI bool` フラグを持つ。`true` のとき `resolveRuntimeSecrets`（`cmd/secrets.go:23`）が AI API key 未設定エラーと provider フォールバックを行う。
+- `runApplicationWith`（`cmd/application.go:187`）は `buildRuntime(deps, deps.warn, true)` を呼び、**TUI 起動時に AI API key を必須**にしている。ここが変更点。
 - `runAnalyze`（`cmd/analyze.go:38`）は `buildRuntime(..., true)` で AI 必須。`runAnalyze` の provider チェック（`cmd/analyze.go:51-52`）も AI 未設定エラーを出す。
-- `runTrending`（`cmd/trending.go:53`）は `buildRuntime(..., false)` で AI key なしでも動作済み。
+- `runTrending`（`cmd/trending.go:53`）は `buildRuntime(..., false)` で AI API key なしでも動作済み。
 - TUI 本体は空の AI マップを処理できる。`availableProviders`（`internal/tui/model.go:132`）は空マップで空スライスを返し、`NewModel`（`model.go:102-105`）と `nextProvider`（`update.go:161`）は空プロバイダを安全に扱う。
 - 解析失敗時、`analysisFailedMsg` ハンドラ（`internal/tui/update.go:44-57`）が `m.errMessage` にエラーを設定し、`viewInput`（`internal/tui/view.go:97-100`）が表示する。ただし現状の文言は `AI provider "claude" は利用できません`（`internal/analyzer/analyzer.go:74`）で、設定方法の案内が無い。
 
@@ -24,17 +24,17 @@ Status: draft
 ### 対象
 
 - `cmd/application.go`: `runApplicationWith` の `buildRuntime` 呼び出しを `requireAI=false` に変更
-- `cmd/application_test.go`: AI key なしで TUI が起動するテスト追加、既存の必須化テストの改訂
+- `cmd/application_test.go`: AI API key なしで TUI が起動するテスト追加、既存の必須化テストの改訂
 - `internal/tui/update.go`: `startAnalysis`（`update.go:252`）で AI provider が無いときの案内メッセージ表示
 - `internal/tui/update_test.go`: 案内メッセージのテスト追加
-- `SPEC.md`: 2.7 / 2.11 の AI key 必須に関する記述を新挙動に整合
+- `SPEC.md`: 2.7 / 2.11 の AI API key 必須に関する記述を新挙動に整合
 
 ### 対象外
 
 - `reporepo analyze` コマンドの AI 必須要件（`cmd/analyze.go` / `runAnalyze` は変更しない）
 - `cmd/secrets.go` の `resolveRuntimeSecrets` の `requireAI` 分岐ロジック自体（挙動は維持）
 - `internal/analyzer` の provider 未設定エラー文言の変更
-- TUI で AI key を設定する新UI（設定は `reporepo config` に委ねる）
+- TUI で AI API key を設定する新UI（設定は `reporepo config` に委ねる）
 
 ## 設計
 
@@ -46,11 +46,11 @@ Status: draft
 rt, err := buildRuntime(deps, deps.warn, false) // 変更前: true
 ```
 
-- `requireAI=false` のとき `resolveRuntimeSecrets`（`cmd/secrets.go:32-34`）は AI key 未設定エラーと provider フォールバックをスキップする。GitHub token の解決は従来どおり行われる。
+- `requireAI=false` のとき `resolveRuntimeSecrets`（`cmd/secrets.go:32-34`）は AI API key 未設定エラーと provider フォールバックをスキップする。GitHub token の解決は従来どおり行われる。
 - TUI は空の AI マップで起動し、Trending・履歴・お気に入り・ノートを利用できる。
 - `runtimeConfig.DefaultProvider` のフォールバックは効かなくなるが、TUI 側で `availableProviders`（`model.go:102-105`）が利用可能 provider から選ぶため問題ない。AI が空のときは `NewModel` の既定 `"claude"`（`model.go:93`）のまま解析時に案内が出る。
 
-### 変更2: analyze 実行時の AI key 未設定案内（internal/tui/update.go）
+### 変更2: analyze 実行時の AI API key 未設定案内（internal/tui/update.go）
 
 `startAnalysis` の冒頭で、利用可能な AI provider が無ければ解析を開始せずに案内メッセージを表示して留まる。
 
@@ -74,27 +74,27 @@ func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
 
 ### SPEC の整合
 
-- **2.7**（`SPEC.md:71`）: 「AI provider の secret が取得できない場合は安全なエラーと設定方法を表示する」を「TUI は AI key なしで起動でき、解析実行時に設定方法を案内する。`analyze` コマンドは従来どおり AI key 必須」に更新する。
-- **2.11**（`SPEC.md:186`）: 「run と同一の経路」の記述は `run` 側が AI key 必須でなくなったため、`analyze` は明示的に AI key 必須であることを記す。
+- **2.7**（`SPEC.md:71`）: 「AI provider の secret が取得できない場合は安全なエラーと設定方法を表示する」を「TUI は AI API key なしで起動でき、解析実行時に設定方法を案内する。`analyze` コマンドは従来どおり AI API key 必須」に更新する。
+- **2.11**（`SPEC.md:186`）: 「run と同一の経路」の記述は `run` 側が AI API key 必須でなくなったため、`analyze` は明示的に AI API key 必須であることを記す。
 
 ## テストリスト
 
-### A. TUI 起動が AI key なしで成功（cmd/application_test.go）
+### A. TUI 起動が AI API key なしで成功（cmd/application_test.go）
 
-- [ ] AI key を一切設定せず `runApplicationWith` がエラーを返さず、`runTUI` が呼ばれ `deps.AI` が空マップである
-- [ ] AI key なしでも GitHub token の解決と GitHub クライアント構築が行われる（Trending が使える構成）
-- [ ] 既存 `TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath`（`application_test.go:597`）を「AI key なしでも起動成功しデータパスが解決される」に改訂
-- [ ] `reporepo analyze`（`runAnalyze`）は AI key なしのとき従来どおりエラーを返す（回帰、変更なしを確認）
+- [ ] AI API key を一切設定せず `runApplicationWith` がエラーを返さず、`runTUI` が呼ばれ `deps.AI` が空マップである
+- [ ] AI API key なしでも GitHub token の解決と GitHub クライアント構築が行われる（Trending が使える構成）
+- [ ] 既存 `TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath`（`application_test.go:597`）を「AI API key なしでも起動成功しデータパスが解決される」に改訂
+- [ ] `reporepo analyze`（`runAnalyze`）は AI API key なしのとき従来どおりエラーを返す（回帰、変更なしを確認）
 
-### B. analyze 実行時の AI key 未設定案内（internal/tui/update_test.go）
+### B. analyze 実行時の AI API key 未設定案内（internal/tui/update_test.go）
 
 - [ ] `m.ai` が空の Model で `startAnalysis` を呼ぶと `stateInput` のまま、`m.errMessage` に「設定されていません」と設定方法の案内が入り、解析（analyzeCmd）が開始されない
 - [ ] `m.ai` に provider がある場合は従来どおり `stateLoading` へ遷移し解析が開始される（回帰）
-- [ ] 入力画面 `enter` と Trending 一覧 `enter` の両経路で AI key なしの場合に案内が表示される
+- [ ] 入力画面 `enter` と Trending 一覧 `enter` の両経路で AI API key なしの場合に案内が表示される
 
 ### C. 表示（internal/tui/view_test.go）
 
-- [ ] AI key 未設定の `errMessage` が `viewInput` にエラー表示される（既存表示経路の回帰）
+- [ ] AI API key 未設定の `errMessage` が `viewInput` にエラー表示される（既存表示経路の回帰）
 
 ### D. 回帰
 
@@ -105,8 +105,8 @@ func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
 
 ### Step 1: テスト（red）
 
-- `cmd/application_test.go`: AI key なしで `runApplicationWith` が成功し `deps.AI` が空であるテストを書き、現状失敗（エラーで終了）を確認
-- `internal/tui/update_test.go`: `startAnalysis` が AI key なしで案内メッセージを設定し解析を開始しないテストを書き、現状失敗（`stateLoading` に遷移）を確認
+- `cmd/application_test.go`: AI API key なしで `runApplicationWith` が成功し `deps.AI` が空であるテストを書き、現状失敗（エラーで終了）を確認
+- `internal/tui/update_test.go`: `startAnalysis` が AI API key なしで案内メッセージを設定し解析を開始しないテストを書き、現状失敗（`stateLoading` に遷移）を確認
 
 ### Step 2: 実装（green）
 
@@ -133,16 +133,16 @@ go vet ./...
 
 ## 完了条件
 
-- AI key を設定していなくても TUI が起動し、Trending 閲覧・履歴・お気に入り・ノートを利用できる
+- AI API key を設定していなくても TUI が起動し、Trending 閲覧・履歴・お気に入り・ノートを利用できる
 - AI を必要とする解析を TUI 内で実行しようとしたとき、`reporepo config` での設定方法を案内するメッセージが表示される
-- `reporepo analyze` コマンドは従来どおり AI key 未設定でエラーを返す
+- `reporepo analyze` コマンドは従来どおり AI API key 未設定でエラーを返す
 - `SPEC.md` の該当記述が新挙動と整合する
 - `gofmt` / `go test ./...` / `go test -race ./...` / `go vet ./...` が全て成功する
 
 ## 想定される変更
 
 - `cmd/application.go`: `runApplicationWith` の `buildRuntime` 呼び出し（`true` → `false`）
-- `cmd/application_test.go`: AI key なし起動テスト追加、既存必須化テスト改訂
+- `cmd/application_test.go`: AI API key なし起動テスト追加、既存必須化テスト改訂
 - `internal/tui/update.go`: `startAnalysis` への AI provider 空チェック追加
 - `internal/tui/update_test.go` / `view_test.go`: 案内メッセージのテスト追加
 - `SPEC.md`: 2.7 / 2.11 の記述更新
