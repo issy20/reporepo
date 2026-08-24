@@ -218,16 +218,30 @@ func TestLoadConfig_NoCache(t *testing.T) {
 	defer func() { configFilePath = origPath }()
 
 	origHome := os.Getenv("HOME")
-	defer os.Setenv("HOME", origHome)
+	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
+	origAppData := os.Getenv("APPDATA")
+	defer func() {
+		os.Setenv("HOME", origHome)
+		os.Setenv("XDG_CONFIG_HOME", origConfigHome)
+		os.Setenv("APPDATA", origAppData)
+	}()
 
-	os.Setenv("HOME", "/tmp/home1")
+	// os.UserConfigDir は環境で優先される変数が異なる（Unix: XDG_CONFIG_HOME→HOME / darwin: HOME / Windows: APPDATA）。
+	// 各プラットフォームの優先変数だけを変えて、結果が変わることを確認する。
+	setHome := func(dir string) {
+		os.Setenv("HOME", dir)
+		os.Setenv("XDG_CONFIG_HOME", dir+"/config")
+		os.Setenv("APPDATA", dir+"/appdata")
+	}
+
+	setHome("/tmp/home1")
 	path1, err := resolveConfigPath()
 	if err != nil {
 		t.Fatalf("resolveConfigPath failed: %v", err)
 	}
 
-	// 2回目で HOME を変えた時、結果が変わることを確認する（キャッシュされていないことの検証）
-	os.Setenv("HOME", "/tmp/home2")
+	// 2回目でユーザー設定ディレクトリの基準を変えた時、結果が変わることを確認する（キャッシュされていないことの検証）
+	setHome("/tmp/home2")
 
 	// テスト用にキャッシュ変数を明示的にクリアしない状態にする
 	// もし resolveConfigPath() が内部でキャッシュを持っていれば同じ値が返るはず。
@@ -237,6 +251,6 @@ func TestLoadConfig_NoCache(t *testing.T) {
 	}
 
 	if path1 == path2 {
-		t.Errorf("expected paths to be different after changing HOME, but got the same: %s", path1)
+		t.Errorf("expected paths to be different after changing user config dir, but got the same: %s", path1)
 	}
 }
