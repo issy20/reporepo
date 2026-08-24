@@ -1,10 +1,12 @@
 # Plan: data.json の並行アクセス整合性（ファイルロックと削除のストア層移行）
 
-Status: draft
+Status: プロセス間（完了）/ プロセス内ゴルーチン競合（未実装）
 
 ## 目的
 
 SPEC 3章 非機能要件「並行アクセスの整合性」の実装。TUI（`run`）と CLI（`analyze`）が同一の `data.json` を共有しており、複数プロセスが同時に書き込むと `lost update`（相手の追加分が消える）が発生する。`internal/store` にファイルロックを導入して read-modify-write を逐次化し、TUI の削除をストア層の `Delete` へ移行する。
+
+> 注: 下記の **プロセス間（Phase 1）は実装完了**。追加レビューで判明した **プロセス内ゴルーチン競合（Phase 2）** を本計画に追記する（「Phase 2: プロセス内ゴルーチン競合」の章を参照）。
 
 ## 前提
 
@@ -164,5 +166,75 @@ go vet ./...
 
 - branch: `fix-data-consistency`
 - worktree path: `/Users/issy20/ccplayground/reporepo/fix-data-consistency`
+
+---
+
+## Phase 2: プロセス内ゴルーチン競合（更新喪失の残存リスク）
+
+### 目的
+
+Phase 1（flock）は**プロセス間**の逐次化を解決した。しかし追加レビューにより、**同一プロセス内**でも並行ゴルーチンが無ロックで `Load → 変更 → Save` するストアを書き換え得ることが判明した。flock はプロセス内の複数 goroutine からのアクセスも逐次化するが、**「古いクローンによる上書き」**は goroutine の順序だけでは防げないため、TUI / analyzer 層でガードする。
+
+### 発火経路（前回レビューより）
+
+- ノート保存の `mutationPending` 中に `r` / `l`（解析）が実行できる（`update.go:235` の `mutationPending` ガードがノート以外に効かない）
+- 解析を `esc` キャンセル（`update.go:180-188`）した直後に `f` / `d` が実行でき、実行中の `analyzer.Analyze` goroutine がキャンセル済み context でも `store.Upsert` を続行し得る
+- `CloneEntry`（`analyzer.go`）で作った**古い状態のクローン**が、再生成済みの解析や更新済み `RepoMeta` を上書きし得る
+
+### スコープ（Phase 2）
+
+#### 対象
+
+- `internal/tui/update.go`: 解析・削除・お気に入りの `mutationPending` ガードを全 mutation へ統一し、並行開始を防ぐ
+- `internal/analyzer/analyzer.go`: キャンセル済み context での `store.Upsert` 継続を防ぐ
+- `internal/tui/commands.go`: ノート保存・削除・お気に入りの書き込みを、解析中の書き込みと直列化する
+- テスト: `internal/tui` / `internal/analyzer` の並行・キャンセル・上書きテスト
+
+#### 対象外
+
+- Phase 1 の flock（`internal/store`）の変更
+- ストア層でのバージョニング（ETag / 楽観ロック）。現在は単一エントリ操作のため不要と判断
+
+### 設計（Phase 2）
+
+#### 変更1: mutation の排他を全操作に統一
+
+`mutationPending` は現在ノート保存（`updateNoteEditing`）以外の開始をガードしない。解析は `stateLoading` でブロックされるが、ノート保存中は `stateDetail` のままなので `r` / `l` が通る。次の方針で統一する。
+
+- 解析の開始（`startAnalysis`）を `mutationPending` 中はブロックする
+- ノート・お気に入り・削除の開始も `mutationPending` で直列化（既存を維持）
+- ノート保存中（`noteEditing` + 保存実行中）は `r` / `l` / `f` を無効化し、完了通知（`entryMutationFinishedMsg`）後に解除
+
+これにより、同一プロセス内で並行する `Upsert` / `Delete` の発生自体を防ぐ。
+
+#### 変更2: キャンセル済み解析の書き込み抑止
+
+`analyzer.Analyze` は context キャンセル後も `store.Upsert` を呼ぶ可能性がある（`contextError` チェックの直後に書き込み位置まで進む経路）。書き込み直前に `contextError` を再確認するガードを、保存前の最終地点に追加する。キャンセル時は「保存しないで終了」とし、部分的な書き込みを防ぐ。
+
+#### 変更3: 古いクローンの上書き防止
+
+`CloneEntry` + `Upsert` の read-modify-write は、クローン作成後に他 goroutine が保存した新状態を失わせる。Phase 2 ではTUI層での排他（変更1）により同時実行を防ぐのが主眼。加えて、解析完了時の `reloadEntries` で常に最新状態を読み直し、UI が古い状態を表示・保持しないようにする。
+
+### テストリスト（Phase 2）
+
+- [ ] ノート保存中（`mutationPending`）に `r` / `l` を押しても解析が開始されない
+- [ ] `esc` キャンセル直後の `f` / `d` が、実行中の解析書き込みと競合しない（並行テスト）
+- [ ] キャンセル済み context の解析が `store.Upsert` を呼ばない
+- [ ] ノート保存と解析が並行して起きない（`mutationPending` ガード）
+- [ ] 既存 TUI / analyzer テストが通る（回帰）
+
+### 実装順序（Phase 2）
+
+1. TUI の `mutationPending` 統一（テスト → red → green）
+2. analyzer の保存前 `contextError` 再確認（テスト → red → green）
+3. `reloadEntries` による最新状態の読み直し確認
+4. 検証: `gofmt -l .` / `go test ./...` / `go test -race ./...` / `go vet ./...`
+
+### 完了条件（Phase 2）
+
+- 同一プロセス内で並行する `store.Upsert` / `Delete` が発生しない
+- キャンセル済み解析がストアを書き換えない
+- 古いクローンによる再生成済み解析・`RepoMeta` の上書きが起きない
+- `gofmt` / `go test ./...` / `go test -race ./...` / `go vet ./...` が全て成功する
 
 理由: SPEC 3章 非機能要件の実装であり、`internal/store` を中心とした改修。依存追加（`gofrs/flock`）と TUI の削除移行を含むため、専用 worktree で進める。
