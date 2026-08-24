@@ -188,6 +188,10 @@ func (m Model) viewDetail() string {
 		b.WriteString(fitLine(warningStyle.Render(safeText(warning)), width))
 	}
 	b.WriteByte('\n')
+	if m.errMessage != "" {
+		b.WriteString(fitLine(errorStyle.Render(safeText(m.errMessage)), width))
+		b.WriteByte('\n')
+	}
 	b.WriteString(fitLine(dimStyle.Render("Esc: 戻る  ↑↓/PgUp/PgDn: スクロール  l: 言語  f: お気に入り  r: 再生成  n: ノート編集"), width))
 	return b.String()
 }
