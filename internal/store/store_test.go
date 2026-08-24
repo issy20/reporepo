@@ -2,11 +2,15 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/issy20/reporepo/internal/core"
 )
 
@@ -174,7 +178,7 @@ func TestStore_SaveFail_Rename(t *testing.T) {
 		t.Fatalf("read temp directory: %v", err)
 	}
 	for _, file := range files {
-		if file.Name() != "data.json" {
+		if file.Name() != "data.json" && file.Name() != "data.json.lock" {
 			t.Errorf("temporary file leaked after failed save: %s", file.Name())
 		}
 	}
@@ -227,5 +231,152 @@ func TestStore_RepeatedSave(t *testing.T) {
 		if err := s.Save([]*core.Entry{entry}); err != nil {
 			t.Fatalf("repeated save failed at iteration %d: %v", i, err)
 		}
+	}
+}
+
+func TestStore_ConcurrentUpsertKeepsAllEntries(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "data.json")
+	s := NewStore(dbPath)
+
+	const n = 20
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errCh <- s.Upsert(&core.Entry{FullName: fmt.Sprintf("owner/repo-%d", i)})
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent Upsert failed: %v", err)
+		}
+	}
+
+	loaded, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(loaded) != n {
+		t.Fatalf("expected %d entries, got %d (lost update)", n, len(loaded))
+	}
+	seen := make(map[string]bool)
+	for _, e := range loaded {
+		seen[e.FullName] = true
+	}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("owner/repo-%d", i)
+		if !seen[name] {
+			t.Errorf("entry %s was lost", name)
+		}
+	}
+}
+
+func TestStore_ConcurrentUpsertAndDeleteSerialized(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "data.json")
+	s := NewStore(dbPath)
+
+	if err := s.Upsert(&core.Entry{FullName: "owner/keep"}); err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	if err := s.Upsert(&core.Entry{FullName: "owner/drop"}); err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+
+	const add = 10
+	var wg sync.WaitGroup
+	errCh := make(chan error, add+1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- s.Delete("owner/drop")
+	}()
+	for i := 0; i < add; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errCh <- s.Upsert(&core.Entry{FullName: fmt.Sprintf("owner/add-%d", i)})
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent op failed: %v", err)
+		}
+	}
+
+	loaded, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	names := make(map[string]bool)
+	for _, e := range loaded {
+		names[e.FullName] = true
+	}
+	if names["owner/drop"] {
+		t.Error("deleted entry still present")
+	}
+	if !names["owner/keep"] {
+		t.Error("keep entry was lost during concurrent delete")
+	}
+	for i := 0; i < add; i++ {
+		if !names[fmt.Sprintf("owner/add-%d", i)] {
+			t.Errorf("added entry owner/add-%d was lost during concurrent delete", i)
+		}
+	}
+}
+
+func TestStore_LockTimeoutReturnsSafeError(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "data.json")
+	s := NewStore(dbPath)
+
+	original := lockTimeout
+	lockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { lockTimeout = original })
+
+	outer := flock.New(s.lockPath)
+	if err := outer.Lock(); err != nil {
+		t.Fatalf("outer lock failed: %v", err)
+	}
+	defer outer.Unlock()
+
+	err := s.Upsert(&core.Entry{FullName: "owner/repo"})
+	if err == nil {
+		t.Fatal("expected lock timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "保存中") {
+		t.Errorf("error = %q, want safe '保存中' message", err.Error())
+	}
+}
+
+func TestStore_DeleteCaseInsensitive(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "data.json")
+	s := NewStore(dbPath)
+
+	if err := s.Upsert(&core.Entry{FullName: "Owner/Repo"}); err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	if err := s.Upsert(&core.Entry{FullName: "keep/repo"}); err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+
+	if err := s.Delete("owner/repo"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	loaded, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].FullName != "keep/repo" {
+		t.Fatalf("after delete = %#v, want only keep/repo", loaded)
 	}
 }

@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/issy20/reporepo/internal/analyzer"
-	"github.com/issy20/reporepo/internal/core"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -341,19 +340,13 @@ func (m Model) deleteSelected() (tea.Model, tea.Cmd) {
 	if target == nil {
 		return m, nil
 	}
-	entries := make([]*core.Entry, 0, len(m.entries)-1)
-	for _, entry := range m.entries {
-		if entry != nil && !strings.EqualFold(entry.FullName, target.FullName) {
-			entries = append(entries, entry)
-		}
-	}
 	m.mutationRequestID++
 	m.mutationPending = true
 	requestID := m.mutationRequestID
 	fullName := target.FullName
 	store := m.store
 	return m, func() tea.Msg {
-		return entryMutationFinishedMsg{requestID: requestID, kind: mutationDelete, fullName: fullName, err: userStoreError(store.Save(entries))}
+		return entryMutationFinishedMsg{requestID: requestID, kind: mutationDelete, fullName: fullName, err: userStoreError(store.Delete(fullName))}
 	}
 }
 

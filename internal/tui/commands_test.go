@@ -13,14 +13,28 @@ import (
 )
 
 type recordingStore struct {
-	entries                           []*core.Entry
-	loadErr, saveErr, upsertErr       error
-	loadCalls, saveCalls, upsertCalls int
-	events                            *[]string
+	entries                                        []*core.Entry
+	loadErr, saveErr, upsertErr, deleteErr         error
+	loadCalls, saveCalls, upsertCalls, deleteCalls int
+	events                                         *[]string
 }
 
 func (s *recordingStore) Load() ([]*core.Entry, error) { s.loadCalls++; return s.entries, s.loadErr }
 func (s *recordingStore) Save(e []*core.Entry) error   { s.saveCalls++; s.entries = e; return s.saveErr }
+func (s *recordingStore) Delete(fullName string) error {
+	s.deleteCalls++
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	filtered := s.entries[:0]
+	for _, e := range s.entries {
+		if e != nil && !strings.EqualFold(e.FullName, fullName) {
+			filtered = append(filtered, e)
+		}
+	}
+	s.entries = filtered
+	return nil
+}
 func (s *recordingStore) Upsert(e *core.Entry) error {
 	s.upsertCalls++
 	if s.events != nil {
