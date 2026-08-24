@@ -57,6 +57,16 @@ func (s *fakeStore) Upsert(entry *core.Entry) error {
 	s.entries = append(s.entries, entry)
 	return nil
 }
+func (s *fakeStore) Delete(fullName string) error {
+	filtered := s.entries[:0]
+	for _, e := range s.entries {
+		if e != nil && !strings.EqualFold(e.FullName, fullName) {
+			filtered = append(filtered, e)
+		}
+	}
+	s.entries = filtered
+	return nil
+}
 
 func TestNewModelUsesDefaults(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}}, &core.Config{})

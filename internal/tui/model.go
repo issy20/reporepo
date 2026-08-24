@@ -35,6 +35,7 @@ type entryStore interface {
 	Load() ([]*core.Entry, error)
 	Save([]*core.Entry) error
 	Upsert(*core.Entry) error
+	Delete(fullName string) error
 }
 
 // Dependencies は TUI が利用する外部境界をまとめる。

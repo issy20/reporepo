@@ -395,8 +395,8 @@ func TestDeleteUsesCaseInsensitiveFullNameAndDoesNotMutateBeforeResult(t *testin
 		t.Fatal("model entries changed before delete result")
 	}
 	msg := cmd()
-	if store.saveCalls != 1 || len(store.entries) != 1 || store.entries[0] != keep {
-		t.Fatalf("saved=%#v calls=%d", store.entries, store.saveCalls)
+	if store.deleteCalls != 1 || len(store.entries) != 1 || store.entries[0] != keep {
+		t.Fatalf("deleted=%#v calls=%d", store.entries, store.deleteCalls)
 	}
 	got, _ := updated(t, pending, msg)
 	if len(got.entries) != 1 || got.entries[0] != keep {
@@ -407,7 +407,7 @@ func TestDeleteUsesCaseInsensitiveFullNameAndDoesNotMutateBeforeResult(t *testin
 func TestDeleteFailureKeepsEntriesSelectionAndError(t *testing.T) {
 	first := &core.Entry{FullName: "first/repo"}
 	second := &core.Entry{FullName: "second/repo"}
-	store := &recordingStore{entries: []*core.Entry{first, second}, saveErr: errors.New("raw database failure")}
+	store := &recordingStore{entries: []*core.Entry{first, second}, deleteErr: errors.New("raw database failure")}
 	m := NewModel(Dependencies{Store: store}, nil)
 	m.selected = 1
 	loadsBefore := store.loadCalls
