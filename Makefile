@@ -5,7 +5,7 @@ DIST    := dist
 # クロスコンパイル対象（CGO 不要 → 単一バイナリ配布）
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
 
-.PHONY: build test lint fmt vet tidy run smoke cross clean
+.PHONY: build test lint fmt vet tidy run smoke cross release clean
 
 build: ## バイナリをビルド
 	go build -o $(BINARY) .
@@ -42,6 +42,9 @@ cross: ## 全プラットフォーム向けにビルド
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			go build -o $(DIST)/$(BINARY)_$${os}_$${arch}$$ext . ; \
 	done
+
+release: ## GoReleaser でリリース（スナップショット検証は goreleaser release --snapshot --clean）
+	goreleaser release --clean
 
 clean: ## 生成物を削除
 	rm -rf $(BINARY) $(DIST)
