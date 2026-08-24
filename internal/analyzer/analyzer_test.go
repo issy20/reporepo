@@ -405,6 +405,20 @@ func TestAnalyzeRefreshFailureMapsContextCancellationToError(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCanceledDuringRefreshStillDoesNotUpsert(t *testing.T) {
+	entry := cachedEntry(time.Unix(98, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	gh := &fakeGitHub{meta: &core.RepoMeta{UpdatedAt: time.Unix(10, 0)}, metaCancel: cancel}
+	s, ai := &fakeStore{entries: []*core.Entry{entry}}, &fakeAI{}
+	_, err := newAnalyzer(s, gh, ai).Analyze(ctx, "owner/repo", "ja", "claude", false)
+	if err == nil {
+		t.Fatal("cancellation during refresh must return an error")
+	}
+	if s.upsertCalls != 0 {
+		t.Fatalf("upsert after cancellation: %d", s.upsertCalls)
+	}
+}
+
 func TestNeedsRefresh(t *testing.T) {
 	now := time.Unix(99, 0)
 	if !needsRefresh(nil, now, time.Second) {

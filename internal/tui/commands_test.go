@@ -103,6 +103,16 @@ type fakeAI struct {
 	events   *[]string
 }
 
+// blockingAI は Generate が release されるまでブロックするAI。解析と並行操作の競合テスト用。
+type blockingAI struct {
+	release chan struct{}
+}
+
+func (b *blockingAI) Generate(_ context.Context, _ *core.RepoMeta, _, _, _ string) (*core.Analysis, error) {
+	<-b.release
+	return &core.Analysis{}, nil
+}
+
 func (f *fakeAI) Generate(_ context.Context, meta *core.RepoMeta, readme, code, language string) (*core.Analysis, error) {
 	f.calls++
 	f.meta, f.readme, f.language = meta, readme, language
@@ -386,4 +396,33 @@ func TestAnalyzeCmdCarriesRequestIDForSuccessAndFailure(t *testing.T) {
 			t.Fatalf("msg=%#v", msg)
 		}
 	})
+}
+
+func TestCanceledAnalysisDoesNotWriteToStore(t *testing.T) {
+	s := &recordingStore{}
+	gh := &fakeGitHub{data: &clients.RepositoryData{Meta: &core.RepoMeta{FullName: "owner/repo"}}}
+	ai := &blockingAI{release: make(chan struct{})}
+	m := commandModel(s, gh, ai)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.analyze(ctx, "owner/repo", false)
+		done <- err
+	}()
+
+	cancel()
+	close(ai.release)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled analysis returned nil error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("analysis did not finish after cancellation")
+	}
+
+	if s.upsertCalls != 0 {
+		t.Fatalf("canceled analysis wrote to store: %d upserts", s.upsertCalls)
+	}
 }

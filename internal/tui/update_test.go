@@ -369,6 +369,32 @@ func TestMutationPendingSuppressesFavoriteAndDeleteAndOldResult(t *testing.T) {
 	}
 }
 
+func TestMutationPendingSuppressesAnalysisStartInDetail(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.state, m.current = stateDetail, entry
+	m.mutationPending = true
+	for _, key := range []rune{'r', 'l'} {
+		got, cmd := updated(t, m, runeKey(key))
+		if cmd != nil || got.state != stateDetail || got.cancel != nil {
+			t.Fatalf("key=%c started analysis during mutation: state=%v cancel=%v cmd=%v", key, got.state, got.cancel, cmd)
+		}
+	}
+}
+
+func TestMutationPendingSuppressesAnalysisStartInInput(t *testing.T) {
+	entry := &core.Entry{FullName: "owner/repo"}
+	store := &recordingStore{entries: []*core.Entry{entry}}
+	m := NewModel(Dependencies{Store: store}, nil)
+	m.selected = 0
+	m.mutationPending = true
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || got.state != stateInput || got.cancel != nil {
+		t.Fatalf("enter started analysis during mutation: state=%v cancel=%v cmd=%v", got.state, got.cancel, cmd)
+	}
+}
+
 func TestFavoriteSuccessInFavoritesTabRemovesEntryAndClampsSelection(t *testing.T) {
 	first := &core.Entry{FullName: "first/repo", IsFavorite: true}
 	second := &core.Entry{FullName: "second/repo", IsFavorite: true}

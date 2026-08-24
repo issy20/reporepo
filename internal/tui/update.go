@@ -250,6 +250,9 @@ func (m Model) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
+	if m.mutationPending {
+		return m, nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.requestID++

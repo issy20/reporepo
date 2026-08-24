@@ -151,6 +151,9 @@ func (a *Analyzer) cacheHit(ctx context.Context, existing *core.Entry, owner, re
 			updated.RepoMeta.FetchedAt = now
 		}
 	}
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
 	if err := a.store.Upsert(updated); err != nil {
 		return nil, errors.New("履歴を保存できませんでした")
 	}
