@@ -22,7 +22,7 @@ func updated(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func TestEnterStartsAnalysisAndSuccessOpensDetail(t *testing.T) {
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	m.input.SetValue("owner/repo")
 	loading, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if loading.state != stateLoading || cmd == nil || loading.requestID == 0 {
@@ -49,8 +49,42 @@ func TestFailureReturnsToInputAndOldResultIsIgnored(t *testing.T) {
 	}
 }
 
-func TestLoadingEscapeCancelsAndInvalidatesRequest(t *testing.T) {
+func TestStartAnalysisWithoutAIKeysShowsGuidanceAndDoesNotStart(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.input.SetValue("owner/repo")
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.state != stateInput || cmd != nil || got.cancel != nil || got.requestID != 0 {
+		t.Fatalf("state=%v cmd=%v cancel=%v id=%d", got.state, cmd, got.cancel, got.requestID)
+	}
+	if !strings.Contains(got.errMessage, "設定されていません") || !strings.Contains(got.errMessage, "reporepo config") {
+		t.Fatalf("errMessage=%q, want config guidance", got.errMessage)
+	}
+}
+
+func TestStartAnalysisWithAIKeysStartsLoading(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
+	m.input.SetValue("owner/repo")
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.state != stateLoading || cmd == nil || got.requestID == 0 {
+		t.Fatalf("state=%v cmd=%v id=%d", got.state, cmd, got.requestID)
+	}
+}
+
+func TestTrendingEnterWithoutAIKeysShowsGuidanceAndDoesNotStart(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, GitHub: &fakeGitHub{}}, nil)
+	m.state = stateTrending
+	m.trendingRepos = testTrendingRepos()
+	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.state != stateTrending || cmd != nil || got.cancel != nil || got.requestID != 0 {
+		t.Fatalf("state=%v cmd=%v cancel=%v id=%d", got.state, cmd, got.cancel, got.requestID)
+	}
+	if !strings.Contains(got.errMessage, "設定されていません") || !strings.Contains(got.errMessage, "reporepo config") {
+		t.Fatalf("errMessage=%q, want config guidance", got.errMessage)
+	}
+}
+
+func TestLoadingEscapeCancelsAndInvalidatesRequest(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	next, _ := m.startAnalysis("owner/repo", false)
 	loading := next.(Model)
 	id := loading.requestID
@@ -62,7 +96,7 @@ func TestLoadingEscapeCancelsAndInvalidatesRequest(t *testing.T) {
 
 func TestStartAnalysisClearsErrorSetsLabelAndUsesSelectedHistory(t *testing.T) {
 	entry := &core.Entry{FullName: "selected/repo"}
-	m := NewModel(Dependencies{Store: &fakeStore{entries: []*core.Entry{entry}}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{entries: []*core.Entry{entry}}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	m.errMessage = "old error"
 	loading, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if loading.state != stateLoading || loading.cancel == nil || loading.errMessage != "" || loading.loadingLabel != "解析しています: selected/repo" || cmd == nil {
@@ -79,7 +113,7 @@ func TestEmptyInputAndHistoryDoesNotStartAnalysis(t *testing.T) {
 }
 
 func TestLoadingKeysDoNotStartSecondAnalysis(t *testing.T) {
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	next, _ := m.startAnalysis("owner/repo", false)
 	loading := next.(Model)
 	id := loading.requestID
@@ -178,7 +212,7 @@ func TestInputNavigationTogglesAndTypingShortcuts(t *testing.T) {
 
 func TestDetailLanguageUsesCacheOrStartsAnalysis(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo", Analyses: map[string]*core.Analysis{"ja": {}, "en": {Summary: "cached"}}}
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	m.state = stateDetail
 	m.current = entry
 	m.setDetailContent()
@@ -520,7 +554,7 @@ func TestEmptyHistoryNavigationDoesNotPanic(t *testing.T) {
 }
 
 func TestEnterTrimsInput(t *testing.T) {
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	m.input.SetValue("  owner/repo  ")
 	got, cmd := updated(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil || got.state != stateLoading || got.loadingLabel != "解析しています: owner/repo" {
@@ -609,7 +643,7 @@ func TestNilDependenciesAndDetailCurrentMutationKeysAreNoops(t *testing.T) {
 
 func TestDetailLanguageHandlesNilAnalyses(t *testing.T) {
 	entry := &core.Entry{FullName: "owner/repo"}
-	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{"claude": &fakeAI{}}}, nil)
 	m.state, m.current = stateDetail, entry
 	got, cmd := updated(t, m, runeKey('l'))
 	if got.language != "en" || got.state != stateLoading || cmd == nil {

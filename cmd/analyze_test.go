@@ -256,6 +256,19 @@ func TestAnalyzeUnsetProviderReturnsConfigGuidance(t *testing.T) {
 	}
 }
 
+func TestAnalyzeRequiresAIKeysWhenNoneSet(t *testing.T) {
+	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"})
+	b.secretStore(map[secretstore.Key]string{
+		secretstore.GitHubToken: "github",
+	})
+	deps, _, _ := b.build()
+
+	_, _, err := executeAnalyze(t, deps, "analyze", "owner/repo")
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("error = %v, want AI key requirement", err)
+	}
+}
+
 func TestAnalyzeForceRegeneratesCache(t *testing.T) {
 	ai := &recordingAIClient{analysis: testAnalysis()}
 	b := newAnalyzeDepsBuilder(t, &core.Config{DefaultProvider: "claude", DefaultLanguage: "ja"}).provider("claude", ai)

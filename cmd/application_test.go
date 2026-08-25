@@ -74,7 +74,7 @@ func TestRunApplicationUsesGeminiAsOnlyAvailableProvider(t *testing.T) {
 			return stubAIClient{}, nil
 		},
 		runTUI: func(deps tui.Dependencies, cfg *core.Config) error {
-			if cfg.DefaultProvider != "gemini" || len(deps.AI) != 1 || deps.AI["gemini"] == nil {
+			if len(deps.AI) != 1 || deps.AI["gemini"] == nil {
 				t.Fatalf("TUI config = %#v, AI = %#v", cfg, deps.AI)
 			}
 			return nil
@@ -498,9 +498,6 @@ func TestRunApplicationUsesOnlyAvailableOpenAIProvider(t *testing.T) {
 			return stubAIClient{}
 		},
 		runTUI: func(deps tui.Dependencies, cfg *core.Config) error {
-			if cfg.DefaultProvider != "openai" {
-				t.Fatalf("DefaultProvider = %q, want openai", cfg.DefaultProvider)
-			}
 			if len(deps.AI) != 1 || deps.AI["openai"] == nil {
 				t.Fatalf("AI dependencies = %#v", deps.AI)
 			}
@@ -594,8 +591,13 @@ func TestRunApplicationReturnsSetupErrors(t *testing.T) {
 	})
 }
 
-func TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath(t *testing.T) {
+func TestRunApplicationStartsWithoutAIKeys(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	pathCalls := 0
+	ghCalls := 0
 	err := runApplicationWith(applicationDependencies{
 		loadConfig: func() (*core.Config, error) {
 			return &core.Config{}, nil
@@ -603,14 +605,36 @@ func TestRunApplicationRejectsMissingAIKeysBeforeResolvingDataPath(t *testing.T)
 		secretStore: testutil.NewMemorySecretStore(nil),
 		dataPath: func() (string, error) {
 			pathCalls++
-			return "", nil
+			return filepath.Join(t.TempDir(), "data.json"), nil
+		},
+		ghAuthToken: func() (string, error) {
+			ghCalls++
+			return "gh-token", nil
+		},
+		newGitHub: func(_ *http.Client, _ string, token string) clients.GitHubClient {
+			if token != "gh-token" {
+				t.Fatalf("GitHub token = %q, want gh-token", token)
+			}
+			return stubGitHubClient{}
+		},
+		runTUI: func(deps tui.Dependencies, _ *core.Config) error {
+			if len(deps.AI) != 0 {
+				t.Fatalf("AI = %#v, want empty", deps.AI)
+			}
+			if deps.GitHub == nil {
+				t.Fatal("GitHub client was not built")
+			}
+			return nil
 		},
 	})
-	if err == nil || err.Error() != "ANTHROPIC_API_KEY、OPENAI_API_KEY、GEMINI_API_KEY のいずれかを設定してください" {
-		t.Fatalf("error = %v", err)
+	if err != nil {
+		t.Fatalf("runApplicationWith() error = %v", err)
 	}
-	if pathCalls != 0 {
-		t.Fatalf("data path calls = %d, want 0", pathCalls)
+	if pathCalls != 1 {
+		t.Fatalf("data path calls = %d, want 1", pathCalls)
+	}
+	if ghCalls != 1 {
+		t.Fatalf("ghAuthToken calls = %d, want 1", ghCalls)
 	}
 }
 

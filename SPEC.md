@@ -68,7 +68,7 @@ GitHub tokenとAPI key（以下「secret」）は設定JSONへ保存せず、OS�
 3. GitHub tokenのみ: `gh` CLIの認証トークン（`gh auth token`）
 4. 未設定
 
-環境変数はその実行中だけ優先し、値を資格情報ストアや設定JSONへ書き戻さない。資格情報ストアが利用できない場合も、secretを設定JSONへ平文で自動フォールバックしない。AI providerのsecret（Anthropic / OpenAI / Gemini API key）が取得できない場合は安全なエラーと設定方法を表示する。GitHub tokenは未設定でも動作するが、`gh` CLIが認証済みならそのOAuthトークンを借用してレート制限を緩和できる。
+環境変数はその実行中だけ優先し、値を資格情報ストアや設定JSONへ書き戻さない。資格情報ストアが利用できない場合も、secretを設定JSONへ平文で自動フォールバックしない。TUI は AI API key なしでも起動でき、AI を必要としない機能（Trending閲覧・履歴・お気に入り・ノート）を利用できる。TUI 内で解析を実行したとき、AI API key が設定されていなければ `reporepo config` での設定方法を案内する。`analyze` コマンドは解析を主目的とするため、AI API key がなければ安全なエラーと設定方法を表示する。GitHub tokenは未設定でも動作するが、`gh` CLIが認証済みならそのOAuthトークンを借用してレート制限を緩和できる。
 
 **GitHub tokenの `gh` フォールバック。** 環境変数とOS資格情報ストアの両方にGitHub tokenがない場合に限り、`gh auth token` の標準出力を実行時ConfigのGitHub tokenとして使用する。これは本人のマシン上の本人のトークンを同じ用途（GitHub REST API でのリポジトリ読み取り）で使うだけであり、外部へ送信・保存しない。適用条件と挙動は次のとおり。
 
@@ -183,7 +183,7 @@ reporepo analyze --force owner/repo
 - `--force, -f`: キャッシュを無視して再生成
 
 **動作。**
-- 設定・secret の解決、GitHub・AI クライアントの構築は `run` と同一の経路（環境変数 > OS 資格情報ストア > 未設定）。指定した provider の API key がなければ設定方法を案内するエラーを stderr へ出力
+- 設定・secret の解決、GitHub・AI クライアントの構築は `run` と同一の経路（環境変数 > OS 資格情報ストア > 未設定）。`analyze` は解析を主目的とするため、TUI と異なり AI API key 必須とし、指定した provider の API key がなければ設定方法を案内するエラーを stderr へ出力
 - ストア（`data.json`）は TUI と共有し、解析結果は保存されて TUI の履歴にも現れる。キャッシュヒット時は再生成せず保存済みを出力する（`--force` で再生成）。鮮度管理（2.10）と入力バージョン管理（2.9）も適用
 - 出力は常に ANSI を含まない plain text（TTY でも装飾しない）。解析結果そのものがデータであり、パイプ・ファイル・ページャーでの利用を前提とするため、CLI プレゼンテーションの装飾対象から意図的に除外する
 - エラーは stderr（`presentation.Renderer` 経由）、終了コードは成功 0 / 失敗 1

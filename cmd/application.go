@@ -161,9 +161,6 @@ func buildRuntime(deps applicationDependencies, warn func(string), requireAI boo
 		store:    deps.newStore(path),
 		dataPath: path,
 	}
-	if !requireAI {
-		return rt, nil
-	}
 
 	hasClaude := runtimeConfig.AnthropicAPIKey != ""
 	hasOpenAI := runtimeConfig.OpenAIAPIKey != ""
@@ -185,7 +182,7 @@ func buildRuntime(deps applicationDependencies, warn func(string), requireAI boo
 }
 
 func runApplicationWith(deps applicationDependencies) error {
-	rt, err := buildRuntime(deps, deps.warn, true)
+	rt, err := buildRuntime(deps, deps.warn, false)
 	if err != nil {
 		return err
 	}

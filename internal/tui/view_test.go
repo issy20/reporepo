@@ -397,6 +397,19 @@ func TestDetailViewSanitizesErrorMessageControlCharacters(t *testing.T) {
 	}
 }
 
+func TestInputViewShowsAIGuidanceError(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	m.width, m.height = 80, 12
+	m.errMessage = "AIのAPI keyが設定されていません。`reporepo config` で設定できます"
+	view := m.View()
+	if !strings.Contains(view, "設定されていません") || !strings.Contains(view, "reporepo config") {
+		t.Fatalf("AI guidance missing from view: %q", view)
+	}
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("view contains control characters: %q", view)
+	}
+}
+
 func TestDetailViewHidesErrorWhenEmpty(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}, Renderer: fakeRenderer{output: "body"}}, nil)
 	m.state, m.current = stateDetail, &core.Entry{FullName: "owner/repo"}

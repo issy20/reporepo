@@ -253,6 +253,10 @@ func (m Model) startAnalysis(input string, force bool) (tea.Model, tea.Cmd) {
 	if m.mutationPending {
 		return m, nil
 	}
+	if len(availableProviders(m.ai)) == 0 {
+		m.errMessage = "AIのAPI keyが設定されていません。`reporepo config` で設定できます"
+		return m, nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.requestID++
