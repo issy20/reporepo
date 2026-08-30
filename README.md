@@ -180,7 +180,7 @@ export GEMINI_API_KEY=...
 reporepo run
 ```
 
-GitHub tokenは任意です（未設定でも動作しますが、GitHub APIの低いレート制限が適用されます）。Anthropic / OpenAI / GeminiのAPI keyはいずれか一つ以上が必要です。
+GitHub tokenは任意です（未設定でも動作しますが、GitHub APIの低いレート制限が適用されます）。TUIの起動・Trending一覧・履歴・お気に入り・学習ノートはAI API keyなしでも利用できます。リポジトリの解析（`analyze` コマンド、またはTUIでEnter）にはAnthropic / OpenAI / GeminiのAPI keyのいずれか一つ以上が必要です。
 
 #### GitHub tokenの自動借用
 
