@@ -32,7 +32,7 @@ GitHub には公式の Trending API が存在しない。スクレイピング�
 
 ### 2.2 AI プロバイダ
 
-Claude（Anthropic Messages API）、OpenAI（Chat Completions API）、Gemini（Gemini Developer API）に対応する。`p` キーは利用可能なproviderを `claude` → `openai` → `gemini` の固定順で巡回する。Geminiの既定モデルは安定版 `gemini-3.5-flash` とする。出力は JSON 構造化出力を要求し、UI のセクションへマッピングする。
+Claude（Anthropic Messages API）、OpenAI（Chat Completions API）、Gemini（Gemini Developer API）に対応する。`p` キーは利用可能なproviderを `claude` → `openai` → `gemini` の固定順で巡回する。利用可能な provider が無く `default_provider` も未設定の場合は「未設定」と表示し、`p` キーでは切り替わらない。Geminiの既定モデルは安定版 `gemini-3.5-flash` とする。出力は JSON 構造化出力を要求し、UI のセクションへマッピングする。
 
 ### 2.3 多言語
 

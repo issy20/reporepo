@@ -77,8 +77,8 @@ func TestNewModelUsesDefaults(t *testing.T) {
 	if m.language != "ja" {
 		t.Errorf("language = %q, want ja", m.language)
 	}
-	if m.provider != "claude" {
-		t.Errorf("provider = %q, want claude", m.provider)
+	if m.provider != "" {
+		t.Errorf("provider = %q, want unset", m.provider)
 	}
 }
 
@@ -91,8 +91,26 @@ func TestNewModelUsesDefaultsWithNilConfig(t *testing.T) {
 	if m.language != "ja" {
 		t.Errorf("language = %q, want ja", m.language)
 	}
-	if m.provider != "claude" {
-		t.Errorf("provider = %q, want claude", m.provider)
+	if m.provider != "" {
+		t.Errorf("provider = %q, want unset", m.provider)
+	}
+}
+
+func TestNewModelUnsetsProviderWhenNoAIAndNoDefaultProvider(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, &core.Config{})
+
+	if m.provider != "" {
+		t.Errorf("provider = %q, want unset", m.provider)
+	}
+}
+
+func TestNewModelPicksFirstAvailableProviderWithoutConfig(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}, AI: map[string]clients.AIClient{
+		"openai": &fakeAI{}, "gemini": &fakeAI{},
+	}}, nil)
+
+	if m.provider != "openai" {
+		t.Errorf("provider = %q, want openai", m.provider)
 	}
 }
 

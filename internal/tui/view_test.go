@@ -118,10 +118,14 @@ func (r *recordingRenderer) Render(source string, width int) (string, error) {
 func TestViewsContainRequiredInformation(t *testing.T) {
 	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
 	input := m.View()
-	for _, want := range []string{"owner/repo", "履歴", "お気に入り", "言語: ja", "provider: claude", "Enter:"} {
+	for _, want := range []string{"owner/repo", "履歴", "お気に入り", "言語: ja", "provider: 未設定", "Enter:"} {
 		if !strings.Contains(input, want) {
 			t.Errorf("input view missing %q", want)
 		}
+	}
+	m.provider = "claude"
+	if input := m.View(); !strings.Contains(input, "provider: claude") {
+		t.Errorf("input view missing configured provider %q", input)
 	}
 	m.state = stateLoading
 	m.loadingLabel = "解析しています: owner/repo"
