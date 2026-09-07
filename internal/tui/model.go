@@ -90,7 +90,7 @@ type Model struct {
 }
 
 func NewModel(deps Dependencies, cfg *core.Config) Model {
-	language, provider := "ja", "claude"
+	language, provider := "ja", ""
 	if cfg != nil {
 		if cfg.DefaultLanguage == "ja" || cfg.DefaultLanguage == "en" {
 			language = cfg.DefaultLanguage

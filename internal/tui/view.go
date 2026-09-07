@@ -91,7 +91,11 @@ func (m Model) viewInput() string {
 		b.WriteByte('\n')
 	}
 	b.WriteString("\n")
-	b.WriteString(fitLine(fmt.Sprintf("言語: %s  provider: %s", m.language, m.provider), layout.width))
+	providerLabel := m.provider
+	if providerLabel == "" {
+		providerLabel = "未設定"
+	}
+	b.WriteString(fitLine(fmt.Sprintf("言語: %s  provider: %s", m.language, providerLabel), layout.width))
 	b.WriteByte('\n')
 	b.WriteString(fitLine(dimStyle.Render("Enter: 開く  ↑↓: 選択  Tab: タブ  f: お気に入り  d: 削除  l: 言語  p: provider  q/Esc: 終了"), layout.width))
 	if m.errMessage != "" {

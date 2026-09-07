@@ -205,7 +205,7 @@ func TestInputNavigationTogglesAndTypingShortcuts(t *testing.T) {
 	}
 	m.input.SetValue("owner/")
 	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.input.Value() != "owner/p" || m.provider != "claude" {
+	if m.input.Value() != "owner/p" || m.provider != "" {
 		t.Fatalf("input=%q provider=%s", m.input.Value(), m.provider)
 	}
 }
@@ -607,9 +607,20 @@ func TestTypingReservedAndRegularRunesGoesToTextInput(t *testing.T) {
 		m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
 		m.input.SetValue("owner/")
 		got, _ := updated(t, m, runeKey(r))
-		if got.input.Value() != "owner/"+string(r) || got.language != "ja" || got.provider != "claude" {
+		if got.input.Value() != "owner/"+string(r) || got.language != "ja" || got.provider != "" {
 			t.Fatalf("rune=%c input=%q language=%s provider=%s", r, got.input.Value(), got.language, got.provider)
 		}
+	}
+}
+
+func TestProviderKeyUnsetStaysUnsetWhenNoAvailableProviders(t *testing.T) {
+	m := NewModel(Dependencies{Store: &fakeStore{}}, nil)
+	if m.provider != "" {
+		t.Fatalf("provider = %q, want unset", m.provider)
+	}
+	got, cmd := updated(t, m, runeKey('p'))
+	if cmd != nil || got.provider != "" {
+		t.Fatalf("provider=%q cmd=%v, want unset and no command", got.provider, cmd)
 	}
 }
 
